@@ -1,0 +1,59 @@
+# Rclone Ignore & Exclusion Rules
+# Standard development build artifacts, dependencies, caches, and secrets.
+# Syntax: '- ' to exclude, '+ ' to include.
+
+# Node / JavaScript / TypeScript
+- **/node_modules/**
+- **/.npm/**
+- **/.yarn/**
+- **/.pnpm-store/**
+
+# Python
+- **/__pycache__/**
+- **/*.py[cod]
+- **/.venv/**
+- **/venv/**
+- **/env/**
+- **/.pytest_cache/**
+- **/.mypy_cache/**
+- **/.ruff_cache/**
+
+# Rust
+- **/target/**
+
+# Mobile & Cross-Platform (Flutter / Android / iOS / Kotlin)
+- **/.dart_tool/**
+- **/.gradle/**
+- **/build/**
+- **/Pods/**
+- **/.symlinks/**
+- **/DerivedData/**
+- **/*.apk
+- **/*.aab
+- **/*.ipa
+
+# Web / Framework build outputs & caches
+- **/dist/**
+- **/out/**
+- **/.next/**
+- **/.nuxt/**
+- **/.svelte-kit/**
+- **/.turbo/**
+
+# IDEs, OS metadata & system cache files
+- **/.idea/**
+- **/.vscode/**
+- **/.vs/**
+- **/.DS_Store
+- **/.DS_Store?
+- **/._*
+- **/Thumbs.db
+- **/desktop.ini
+
+# Environment variables & secrets (preserve .env.example)
++ **/.env.example
+- **/.env
+- **/.env.*
+- **/*.key
+- **/*.jks
+- **/*.keystore

@@ -1,0 +1,8 @@
+# Default target configuration for dev-sync.
+# Format: <target_name>=<local_relative_or_absolute_path>|<remote_path>
+# Placeholders:
+#   $LOCAL_BASE will resolve to the parent directory of this project (e.g. C:\dev on Windows, $HOME/dev on Mac/Linux)
+#   or you can specify relative paths (relative to $LOCAL_BASE)
+
+projects=$LOCAL_BASE/projects|gdrive:projects
+phone_projects=$LOCAL_BASE/phone_projects|gdrive:phone_projects

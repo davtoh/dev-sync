@@ -1,0 +1,13 @@
+# OS and editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# Local target configuration (untracked so each machine can tweak if needed)
+sync-targets.conf
+!sync-targets.conf.example
+
+# Logs and dry-run outputs
+*.log
