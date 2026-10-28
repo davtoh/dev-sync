@@ -1,59 +1,63 @@
+# ==============================================================================
 # Rclone Ignore & Exclusion Rules
 # Standard development build artifacts, dependencies, caches, and secrets.
-# Syntax: '- ' to exclude, '+ ' to include.
+# Syntax: '- ' to exclude from sync, '+ ' to include/preserve.
+# In rclone, unanchored patterns (without leading '/') match both at root
+# and at all nested directory depths.
+# ==============================================================================
 
 # Node / JavaScript / TypeScript
-- **/node_modules/**
-- **/.npm/**
-- **/.yarn/**
-- **/.pnpm-store/**
+- node_modules/**
+- .npm/**
+- .yarn/**
+- .pnpm-store/**
 
 # Python
-- **/__pycache__/**
-- **/*.py[cod]
-- **/.venv/**
-- **/venv/**
-- **/env/**
-- **/.pytest_cache/**
-- **/.mypy_cache/**
-- **/.ruff_cache/**
+- __pycache__/**
+- *.py[cod]
+- .venv/**
+- venv/**
+- env/**
+- .pytest_cache/**
+- .mypy_cache/**
+- .ruff_cache/**
 
 # Rust
-- **/target/**
+- target/**
 
 # Mobile & Cross-Platform (Flutter / Android / iOS / Kotlin)
-- **/.dart_tool/**
-- **/.gradle/**
-- **/build/**
-- **/Pods/**
-- **/.symlinks/**
-- **/DerivedData/**
-- **/*.apk
-- **/*.aab
-- **/*.ipa
+- .dart_tool/**
+- .gradle/**
+- build/**
+- Pods/**
+- .symlinks/**
+- DerivedData/**
+- *.apk
+- *.aab
+- *.ipa
 
 # Web / Framework build outputs & caches
-- **/dist/**
-- **/out/**
-- **/.next/**
-- **/.nuxt/**
-- **/.svelte-kit/**
-- **/.turbo/**
+- dist/**
+- out/**
+- .next/**
+- .nuxt/**
+- .svelte-kit/**
+- .turbo/**
 
 # IDEs, OS metadata & system cache files
-- **/.idea/**
-- **/.vscode/**
-- **/.vs/**
-- **/.DS_Store
-- **/.DS_Store?
-- **/._*
-- **/Thumbs.db
-- **/desktop.ini
+- .idea/**
+- .vscode/**
+- .vs/**
+- .DS_Store
+- .DS_Store?
+- ._*
+- Thumbs.db
+- desktop.ini
 
 # Environment variables & secrets (preserve .env.example)
-+ **/.env.example
-- **/.env
-- **/.env.*
-- **/*.key
-- **/*.jks
-- **/*.keystore
++ .env.example
+- .env
+- .env.*
+- *.key
+- *.jks
+- *.keystore

@@ -1,79 +1,147 @@
-# dev-sync: Multi-Platform Workspace Sync via Rclone
+# dev-sync: Universal Multi-Target Workspace Sync via Rclone
 
-A lightweight, portable synchronization and maintenance tool designed to keep active development workspaces in sync across multiple operating systems (Windows, macOS, Linux) via Google Drive, while rigorously excluding build caches, virtual environments, dependencies, and OS metadata.
+A lightweight, portable synchronization and workspace maintenance engine designed to keep active development projects synchronized across multiple machines (Windows, macOS, Linux, and Android/Termux) and cloud backends (Google Drive, AWS S3, Cloudflare R2, SFTP, etc.) via `rclone`.
+
+Build artifacts, virtual environments, node dependencies, IDE caches, and secret keys are rigorously excluded during sync. A dynamic inverted-filter engine ensures that remote bloat can be safely cleaned up without maintaining duplicate rules or risking source code deletion.
 
 ---
 
 ## 1. Directory Structure
 
 ```text
-dev/
-├── dev-sync/                     # This Git repository
-│   ├── .gitignore
-│   ├── README.md
-│   ├── rclone-ignore.txt         # Global exclusion & filter rules
-│   ├── sync-targets.conf         # Active target mapping (ignored by Git)
-│   ├── sync-targets.conf.example # Version-controlled template
-│   ├── sync-projects.ps1         # Windows PowerShell runner
-│   └── sync-projects.sh          # macOS / Linux Bash runner
-├── projects/                     # Local workspaces
-└── phone_projects/
+dev-sync/
+├── .gitignore
+├── AGENTS.md                  # Development invariants & engineering standards
+├── MIGRATION_LOG.md           # Persistent migration and task log
+├── README.md                  # Executable manual & scenario matrix
+├── rclone-ignore.txt          # Canonical ignore & exclusion patterns
+├── sync-targets.conf          # Active local target mappings (untracked)
+├── sync-targets.conf.example  # Version-controlled portable template
+├── sync-projects.ps1          # Windows PowerShell runner
+├── sync-projects.sh           # macOS / Linux / Android (Termux) Bash runner
+├── dev_sync/                  # Python 3 standard library core engine
+│   ├── __init__.py
+│   ├── __main__.py            # CLI entrypoint ('python -m dev_sync')
+│   ├── cli.py                 # Argument parser & feedback formatter
+│   ├── config.py              # Portable path resolver ($LOCAL_BASE, $HOME)
+│   ├── engine.py              # Parameterized rclone subprocess runner
+│   └── filter.py              # Inverted cleanup filter compiler
+└── tests/                     # Automated unit test suite
+    ├── test_config.py
+    ├── test_engine.py
+    └── test_filter.py
 ```
 
 ---
 
-## 2. Configuration (`sync-targets.conf`)
+## 2. Pre-Run Verification One-Liners
 
-Target paths are defined with the `$LOCAL_BASE` variable (which resolves dynamically to the parent folder `dev/` on any OS):
+Before executing sync or cleanup actions, run these quick diagnostic commands to verify environment readiness:
+
+```bash
+# 1. Run the automated test suite (must pass 100%)
+python -m unittest discover -s tests -v
+
+# 2. Check rclone installation and version
+rclone version
+
+# 3. Verify target configuration and resolved local paths
+python -m dev_sync --list-targets
+
+# 4. Preview the compiled inverted cleanup filter derived from rclone-ignore.txt
+python -m dev_sync --test-filter
+```
+
+> [!NOTE]
+> If Google Drive returns `invalid_grant: maybe token expired?`, refresh the OAuth token anytime by running:
+> ```bash
+> rclone config reconnect gdrive:
+> ```
+
+---
+
+## 3. Configuration (`sync-targets.conf`)
+
+Target paths are defined with portable variables in `sync-targets.conf`:
 
 ```ini
+# Format: <target_name>=<raw_local>|<remote_path>
+# Variables available:
+#   $LOCAL_BASE : Parent directory of dev-sync (or $DEV_SYNC_BASE environment variable)
+#   $HOME       : User home directory (~/ on Unix, %USERPROFILE% on Windows)
+#   $ANY_VAR    : Any active environment variable
+
 projects=$LOCAL_BASE/projects|gdrive:projects
 phone_projects=$LOCAL_BASE/phone_projects|gdrive:phone_projects
 ```
 
 ---
 
-## 3. Pre-Run Verification & Diagnostics
-
-Before executing sync or cleanup actions, run diagnostics to check connection and view remote build artifacts:
-
-### Windows (PowerShell):
-```powershell
-.\sync-projects.ps1 -Action diagnose -Target projects
-```
-
-### macOS / Linux (Bash):
-```bash
-chmod +x ./sync-projects.sh
-./sync-projects.sh diagnose projects
-```
-
----
-
 ## 4. Scenario Combinations Matrix
 
-| Scenario / Objective | Target | Options | Windows (PowerShell) | macOS / Linux (Bash) |
-| :--- | :--- | :--- | :--- | :--- |
-| **Inspect Remote Bloat** | `projects` | Read-only scan | `.\sync-projects.ps1 diagnose projects` | `./sync-projects.sh diagnose projects` |
-| **Simulate Cleanup** | `phone_projects` | `--dry-run` | `.\sync-projects.ps1 cleanup phone_projects -DryRun` | `./sync-projects.sh cleanup phone_projects --dry-run` |
-| **Purge Remote Bloat** | `all` | Live remote delete | `.\sync-projects.ps1 cleanup all` | `./sync-projects.sh cleanup all` |
-| **Pull New Changes** | `projects` | Non-destructive copy | `.\sync-projects.ps1 pull projects` | `./sync-projects.sh pull projects` |
-| **Pull with Dry Run** | `all` | Preview download | `.\sync-projects.ps1 pull all -DryRun` | `./sync-projects.sh pull all --dry-run` |
-| **Push Local Changes** | `projects` | Non-destructive copy | `.\sync-projects.ps1 push projects` | `./sync-projects.sh push projects` |
-| **Verify Sync Diff** | `projects` | Integrity comparison | `.\sync-projects.ps1 check projects` | `./sync-projects.sh check projects` |
+| Scenario / Objective | Target | Mode / Flags | Windows (PowerShell) | macOS / Linux / Termux (Bash) | Direct Python |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **List Configured Targets** | - | Read-only | `.\sync-projects.ps1 --list-targets` | `./sync-projects.sh --list-targets` | `python -m dev_sync --list-targets` |
+| **Inspect Remote Bloat** | `projects` | Read-only scan | `.\sync-projects.ps1 diagnose projects` | `./sync-projects.sh diagnose projects` | `python -m dev_sync diagnose projects` |
+| **Simulate Cleanup** | `phone_projects` | `--dry-run` | `.\sync-projects.ps1 cleanup phone_projects -DryRun` | `./sync-projects.sh cleanup phone_projects --dry-run` | `python -m dev_sync cleanup phone_projects --dry-run` |
+| **Purge Remote Bloat** | `all` | Live remote delete | `.\sync-projects.ps1 cleanup all` | `./sync-projects.sh cleanup all` | `python -m dev_sync cleanup all` |
+| **Pull Remote Changes** | `projects` | Copy remote to local | `.\sync-projects.ps1 pull projects` | `./sync-projects.sh pull projects` | `python -m dev_sync pull projects` |
+| **Pull Preview** | `all` | `--dry-run` | `.\sync-projects.ps1 pull all -DryRun` | `./sync-projects.sh pull all --dry-run` | `python -m dev_sync pull all --dry-run` |
+| **Push Local Changes** | `projects` | Copy local to remote | `.\sync-projects.ps1 push projects` | `./sync-projects.sh push projects` | `python -m dev_sync push projects` |
+| **Compare Differences** | `projects` | Check hashes/size | `.\sync-projects.ps1 check projects` | `./sync-projects.sh check projects` | `python -m dev_sync check projects` |
+| **Ad-Hoc Custom Sync** | `custom` | Direct parameters | `.\sync-projects.ps1 push app $HOME/app gdrive:app -DryRun` | `./sync-projects.sh push app "$HOME/app" "gdrive:app" --dry-run` | `python -m dev_sync push app "$HOME/app" "gdrive:app" --dry-run` |
 
 ---
 
-## 5. Freeing Local Google Drive Disk Space
+## 5. Mobile & Android (Termux) Setup
 
-If Google Drive for Desktop (`G:\`) is consuming local storage, it is likely set to **Mirror files** or has cached offline data:
+Because the core engine is pure standard-library Python 3, `dev-sync` runs natively on mobile devices via Termux:
 
-1. Click the **Google Drive icon** in your taskbar / system tray.
-2. Click the **Gear icon (Settings)** → **Preferences**.
-3. Under **Google Drive folders**:
-   - Change from **Mirror files** to **Stream files**.
-   - With "Stream files", files stay in the cloud and are downloaded only on demand.
-4. If a folder was manually pinned:
-   - In File Explorer, right-click `G:\Mi unidad\projects` (or any heavy folder) → **Offline access** → choose **Online only**.
-5. Clear cache:
-   - In Drive Preferences → **Settings (Gear)**, check the **Local cached files directory** size and clear or limit the cache size.
+1. Install prerequisites in Termux:
+   ```bash
+   pkg update
+   pkg install python rclone git
+   ```
+2. Clone your repository:
+   ```bash
+   git clone <your-repo-url> dev-sync
+   cd dev-sync
+   ```
+3. Set your target mappings in `sync-targets.conf` (e.g., pointing to internal storage via `termux-setup-storage`).
+4. Run standard commands:
+   ```bash
+   chmod +x ./sync-projects.sh
+   ./sync-projects.sh pull phone_projects
+   ```
+
+---
+
+## 6. How Dynamic Inverted Filtering Protects Your Code
+
+Standard ignore files (`rclone-ignore.txt`) tell `rclone` which files **not to transfer** during `push` and `pull`:
+- `- node_modules/**` (exclude from transfer)
+- `+ .env.example` (preserve)
+
+If you ran `rclone delete` with this file directly, rclone would delete your source code and spare only the excluded files.
+
+`dev-sync` solves this by dynamically compiling an inverted filter at runtime:
+1. Every `+ pattern` (e.g. `.env.example`) becomes `- pattern` (**protected from deletion**).
+2. Every `- pattern` (e.g. `node_modules/**`, `.venv/**`) becomes `+ pattern` (**targeted for deletion**).
+3. The engine automatically appends a terminal guard: `- **` (**protects all remaining source files**).
+
+This makes remote cleanup 100% automated, synchronized with `rclone-ignore.txt`, and mathematically immune to accidental source code deletion.
+
+---
+
+## 7. Freeing Local Google Drive Disk Space
+
+If Google Drive for Desktop is consuming excessive local disk storage:
+
+1. **Switch from Mirror to Stream:**
+   - Click the **Google Drive icon** in your taskbar / system tray.
+   - Click **Settings (Gear)** → **Preferences**.
+   - Under **Google Drive folders**, select **Stream files** instead of **Mirror files**.
+2. **Mark Heavy Folders Online-Only:**
+   - In File Explorer / Finder, right-click your projects folder inside Google Drive → **Offline access** → choose **Online only**.
+3. **Purge Cache:**
+   - In Google Drive Preferences → **Settings (Gear)**, locate **Local cached files directory** and purge or limit the cache size.

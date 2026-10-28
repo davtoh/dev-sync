@@ -1,8 +1,25 @@
-# Default target configuration for dev-sync.
-# Format: <target_name>=<local_relative_or_absolute_path>|<remote_path>
-# Placeholders:
-#   $LOCAL_BASE will resolve to the parent directory of this project (e.g. C:\dev on Windows, $HOME/dev on Mac/Linux)
-#   or you can specify relative paths (relative to $LOCAL_BASE)
+# ==============================================================================
+# Target configuration for dev-sync.
+# Format: <target_name>=<raw_local>|<remote_path>
+#
+# Supported dynamic variables:
+#   $LOCAL_BASE : Automatically resolves to the parent directory of dev-sync
+#                 (e.g. C:\dev on Windows, $HOME/dev on macOS/Linux/Android)
+#                 or can be overridden with the DEV_SYNC_BASE environment variable.
+#   $HOME       : Resolves to the user's home directory across all platforms.
+#   $ANY_VAR    : Any active system environment variable (e.g. $WORKSPACE).
+#
+# Supported remote backends:
+#   Any rclone-supported remote: Google Drive (gdrive:), AWS S3 (s3:),
+#   OneDrive (onedrive:), Dropbox, SFTP (sftp:), or local paths.
+# ==============================================================================
 
+# Standard development workspaces
 projects=$LOCAL_BASE/projects|gdrive:projects
 phone_projects=$LOCAL_BASE/phone_projects|gdrive:phone_projects
+
+# Example of targeting user home directory:
+# docs=$HOME/Documents/dev-notes|gdrive:backup/notes
+
+# Example of targeting AWS S3 or compatible object storage:
+# cloud_data=$LOCAL_BASE/datasets|s3:my-bucket/datasets
