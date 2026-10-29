@@ -59,6 +59,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Perform a trial run with no permanent changes.",
     )
     parser.add_argument(
+        "--report",
+        type=Path,
+        help="Optional path to save physical diagnostic report (default: dev-sync-report-<target>.txt).",
+    )
+    parser.add_argument(
         "--config",
         type=Path,
         help="Path to sync-targets.conf configuration file.",
@@ -171,7 +176,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         try:
             if args.action == "diagnose":
-                engine.diagnose(t)
+                engine.diagnose(t, report_path=args.report)
             elif args.action == "cleanup":
                 engine.cleanup(t, dry_run=args.dry_run)
             elif args.action == "pull":

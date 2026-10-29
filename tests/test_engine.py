@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from dev_sync.cli import main, parse_args
 from dev_sync.config import SyncTarget
-from dev_sync.engine import SyncEngine
+from dev_sync.engine import SyncEngine, format_diagnostic_report, parse_lsd_duplicates
 
 
 class TestSyncEngine(unittest.TestCase):
@@ -86,6 +86,55 @@ class TestSyncEngine(unittest.TestCase):
         # target.local_path does not exist
         with self.assertRaises(FileNotFoundError):
             engine.push(self.target)
+
+    def test_parse_lsd_duplicates(self):
+        sample_lsd = """
+           0 2026-10-19 22:40:02        -1 web_and_services
+           0 2026-10-19 22:40:36        -1 rpa_automation
+           0 2026-10-19 22:40:02        -1 web_and_services
+           0 2026-10-19 22:40:02        -1 web_and_services
+           0 2026-10-19 22:36:14        -1 products
+        """
+        dups = parse_lsd_duplicates(sample_lsd)
+        self.assertEqual(dups, {"web_and_services": 3})
+
+    def test_format_diagnostic_report(self):
+        report = format_diagnostic_report(
+            target=self.target,
+            lsd_output="           0 2026-10-19 22:40:02 -1 web_and_services",
+            duplicates={"web_and_services": 2},
+            size_output="Total objects: 10\nTotal size: 5 MiB",
+            bloat_roots=["web_and_services/app/node_modules/"],
+        )
+        self.assertIn("dev-sync Diagnostic & Bloat Audit Report", report)
+        self.assertIn("web_and_services/app/node_modules/", report)
+        self.assertIn("ADVISORY: Duplicate Folder Entities Detected", report)
+        self.assertIn("rclone dedupe gdrive:test_proj", report)
+
+    @patch("dev_sync.engine.SyncEngine._verify_rclone")
+    @patch("subprocess.run")
+    def test_diagnose_generates_report_file(self, mock_run, mock_verify):
+        def fake_run(cmd, *args, **kwargs):
+            m = MagicMock()
+            m.returncode = 0
+            if "lsd" in cmd:
+                m.stdout = "           0 2026-10-19 22:40:02 -1 web_and_services\n           0 2026-10-19 22:40:02 -1 web_and_services"
+            elif "size" in cmd:
+                m.stdout = "Total objects: 5\nTotal size: 10 MiB"
+            elif "lsf" in cmd:
+                m.stdout = "web_and_services/\nweb_and_services/node_modules/\nweb_and_services/node_modules/pkg/"
+            return m
+
+        mock_run.side_effect = fake_run
+        engine = SyncEngine(filter_file=self.filter_file)
+        custom_report = self.base / "custom_report.txt"
+        saved = engine.diagnose(self.target, report_path=custom_report)
+
+        self.assertTrue(saved.exists())
+        content = saved.read_text(encoding="utf-8")
+        self.assertIn("web_and_services/node_modules/", content)
+        self.assertNotIn("web_and_services/node_modules/pkg/", content)  # collapsed to root
+        self.assertIn("rclone dedupe", content)
 
 
 if __name__ == "__main__":

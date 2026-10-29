@@ -9,6 +9,7 @@ from pathlib import Path
 from dev_sync.filter import (
     compile_cleanup_filter,
     compile_normalized_sync_filter,
+    extract_bloat_roots,
     generate_cleanup_filter_file,
     normalize_pattern,
     parse_filter_rules,
@@ -65,6 +66,43 @@ class TestFilterCompiler(unittest.TestCase):
 
         # Terminal guard must be the very last rule
         self.assertEqual(lines[-1], "- **", "Final rule must be terminal guard '- **'")
+
+    def test_extract_bloat_roots(self):
+        rules = [
+            ("-", "node_modules/**"),
+            ("-", "build/**"),
+            ("-", ".venv/**"),
+            ("-", ".env"),
+            ("+", ".env.example"),
+        ]
+        raw_traversed_dirs = [
+            "core_libraries/",
+            "products/",
+            "products/rrtools/",
+            "products/rrtools/build/",
+            "products/rrtools/build/nested/",
+            "products/rrtools/src/",
+            "web_and_services/",
+            "web_and_services/enterprise_website/",
+            "web_and_services/enterprise_website/node_modules/",
+            "web_and_services/enterprise_website/node_modules/pkg/",
+            "web_and_services/enterprise_website/node_modules/pkg/lib/",
+            "research_and_experiments/servo_control/examples/",
+        ]
+        bloat = extract_bloat_roots(raw_traversed_dirs, rules)
+        self.assertEqual(
+            bloat,
+            [
+                "products/rrtools/build/",
+                "web_and_services/enterprise_website/node_modules/",
+            ],
+        )
+        # Verify clean source directories were not misclassified
+        self.assertNotIn("core_libraries/", bloat)
+        self.assertNotIn("products/", bloat)
+        self.assertNotIn("products/rrtools/", bloat)
+        self.assertNotIn("products/rrtools/src/", bloat)
+        self.assertNotIn("research_and_experiments/servo_control/examples/", bloat)
 
     def test_rclone_live_cleanup_safety(self):
         """End-to-end empirical verification of rclone filtering using mock filesystem."""

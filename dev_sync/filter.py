@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import re
 from pathlib import Path
 from typing import List, Tuple
@@ -91,6 +92,56 @@ def compile_normalized_sync_filter(rules: List[Tuple[str, str]]) -> str:
     for action, pattern in rules:
         lines.append(f"{action} {pattern}")
     return "\n".join(lines) + "\n"
+
+
+def extract_bloat_roots(raw_paths: List[str], rules: List[Tuple[str, str]]) -> List[str]:
+    """Extract and deduplicate root bloat directory paths matching ignore rules.
+
+    Distinguishes true bloat roots (e.g. 'node_modules', 'build', '.venv') from
+    normal source parent directories traversed during directory scanning.
+    Collapses nested bloat paths into their top-level root.
+    """
+    dir_tokens: List[str] = []
+    file_tokens: List[str] = []
+
+    for action, pat in rules:
+        if action == "-":
+            clean = pat.strip()
+            if clean.endswith("/**"):
+                dir_tokens.append(clean[:-3])
+            elif clean.endswith("/*"):
+                dir_tokens.append(clean[:-2])
+            else:
+                file_tokens.append(clean)
+
+    bloat_roots: set[str] = set()
+
+    for raw_p in raw_paths:
+        p = raw_p.strip().replace("\\", "/").rstrip("/")
+        if not p:
+            continue
+
+        parts = p.split("/")
+        for i, part in enumerate(parts):
+            matched = False
+            for dt in dir_tokens:
+                if fnmatch.fnmatch(part, dt):
+                    bloat_roots.add("/".join(parts[: i + 1]) + "/")
+                    matched = True
+                    break
+            if matched:
+                break
+
+            for ft in file_tokens:
+                if fnmatch.fnmatch(part, ft):
+                    is_dir = i < len(parts) - 1 or raw_p.strip().endswith(("/", "\\"))
+                    bloat_roots.add("/".join(parts[: i + 1]) + ("/" if is_dir else ""))
+                    matched = True
+                    break
+            if matched:
+                break
+
+    return sorted(bloat_roots)
 
 
 def generate_cleanup_filter_file(source_file: Path, target_file: Path) -> Path:

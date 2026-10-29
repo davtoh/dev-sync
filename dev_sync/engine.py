@@ -2,16 +2,117 @@
 
 from __future__ import annotations
 
+import datetime
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+from collections import Counter
 from pathlib import Path
 from typing import List, Optional
 
 from dev_sync.config import SyncTarget
-from dev_sync.filter import generate_cleanup_filter_file
+from dev_sync.filter import extract_bloat_roots, generate_cleanup_filter_file, parse_filter_rules
+
+
+def parse_lsd_duplicates(output: str) -> dict[str, int]:
+    """Parse rclone lsd output and detect duplicate directory names.
+
+    Google Drive and certain cloud backends allow multiple folder objects
+    with the exact same name under the same parent directory.
+    """
+    folder_names: List[str] = []
+    for line in output.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(maxsplit=4)
+        if len(parts) >= 5:
+            folder_names.append(parts[4])
+    counts = Counter(folder_names)
+    return {name: c for name, c in counts.items() if c > 1}
+
+
+def format_diagnostic_report(
+    target: SyncTarget,
+    lsd_output: str,
+    duplicates: dict[str, int],
+    size_output: str,
+    bloat_roots: List[str],
+) -> str:
+    """Construct an untruncated, structured diagnostic report."""
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    lines = [
+        "=" * 80,
+        "dev-sync Diagnostic & Bloat Audit Report",
+        "=" * 80,
+        f"Target           : {target.name}",
+        f"Local Path       : {target.local_path}",
+        f"Remote Path      : {target.remote_path}",
+        f"Timestamp        : {timestamp}",
+        "",
+        "-" * 80,
+        "[1/3] Remote Connectivity & Folder Structure (max-depth 2)",
+        "-" * 80,
+        lsd_output.strip() if lsd_output.strip() else "(No directories listed or remote empty)",
+    ]
+
+    if duplicates:
+        lines.extend([
+            "",
+            "ADVISORY: Duplicate Folder Entities Detected on Remote Storage!",
+            "Providers such as Google Drive permit multiple folders with identical names",
+            "under the same parent. The following duplicate names were found:",
+        ])
+        for name, count in duplicates.items():
+            lines.append(f"  - '{name}' ({count} occurrences)")
+        lines.extend([
+            "",
+            "Remediation:",
+            f"  Run 'rclone dedupe {target.remote_path}' to inspect and merge duplicate folders.",
+        ])
+
+    lines.extend([
+        "",
+        "-" * 80,
+        "[2/3] Remote Bloat Size & Object Metrics",
+        "-" * 80,
+        size_output.strip() if size_output.strip() else "(No size output)",
+        "",
+        "-" * 80,
+        f"[3/3] Detected Remote Bloat Directories ({len(bloat_roots)} Unique Root Locations)",
+        "-" * 80,
+    ])
+
+    if bloat_roots:
+        lines.append("The following root directories match rclone-ignore rules and can be safely cleaned:")
+        for b in bloat_roots:
+            lines.append(f"  - {b}")
+    else:
+        lines.append("No ignored bloat directories detected on remote. Remote is clean!")
+
+    lines.extend([
+        "",
+        "-" * 80,
+        "Remediation & Execution Commands",
+        "-" * 80,
+        f"1. Preview remote bloat deletion without deleting source code:",
+        f"   python -m dev_sync cleanup {target.name} --dry-run",
+        "",
+        f"2. Execute remote bloat deletion:",
+        f"   python -m dev_sync cleanup {target.name}",
+    ])
+
+    if duplicates:
+        lines.extend([
+            "",
+            f"3. Consolidate duplicate remote folders (Google Drive dedupe):",
+            f"   rclone dedupe {target.remote_path}",
+        ])
+
+    lines.extend(["=" * 80, ""])
+    return "\n".join(lines)
 
 
 class SyncEngine:
@@ -48,17 +149,32 @@ class SyncEngine:
                 raise subprocess.CalledProcessError(res.returncode, cmd, output=res.stdout, stderr=res.stderr)
             return res
 
-    def diagnose(self, target: SyncTarget) -> None:
-        """Inspect remote connectivity and calculate exact ignored bloat size."""
+    def diagnose(self, target: SyncTarget, report_path: Optional[Path] = None) -> Path:
+        """Inspect remote connectivity, detect duplicates, and calculate exact ignored bloat size."""
         print(f"\n[1/3] Checking remote connectivity for '{target.remote_path}'...")
+        lsd_output = ""
+        duplicates: dict[str, int] = {}
         try:
-            self._run_rclone(["lsd", target.remote_path, "--max-depth", "2"])
+            lsd_res = self._run_rclone(["lsd", target.remote_path, "--max-depth", "2"], stream=False)
+            lsd_output = lsd_res.stdout
+            if lsd_output.strip():
+                print(lsd_output.strip())
+            duplicates = parse_lsd_duplicates(lsd_output)
+            if duplicates:
+                print("\n[!] Advisory: Detected duplicate folder entries on remote storage:")
+                for name, count in duplicates.items():
+                    print(f"    - '{name}' ({count} occurrences)")
+                print("    Note: Providers like Google Drive allow identical folder names under the same directory.")
+                print(f"    Tip: Run 'rclone dedupe {target.remote_path}' to inspect and merge duplicate folders.")
         except subprocess.CalledProcessError:
             print(f"Warning: Could not list directory structure at '{target.remote_path}'. Remote may be empty or path does not exist yet.")
 
         # Dynamically compile cleanup filter to inspect bloat
         with tempfile.NamedTemporaryFile("w+", suffix=".txt", delete=False) as tf:
             cleanup_filter_path = Path(tf.name)
+
+        size_output = ""
+        bloat_roots: List[str] = []
 
         try:
             generate_cleanup_filter_file(self.filter_file, cleanup_filter_path)
@@ -68,25 +184,43 @@ class SyncEngine:
                 ["size", target.remote_path, "--filter-from", str(cleanup_filter_path)],
                 stream=False,
             )
-            print(size_res.stdout.strip())
+            size_output = size_res.stdout.strip()
+            print(size_output)
 
             print(f"\n[3/3] Scanning top-level build folders on remote matching ignore rules...")
             dirs_res = self._run_rclone(
                 ["lsf", target.remote_path, "--dirs-only", "--recursive", "--max-depth", "3", "--filter-from", str(cleanup_filter_path)],
                 stream=False,
             )
-            found_dirs = [d.strip() for d in dirs_res.stdout.splitlines() if d.strip()]
-            if found_dirs:
-                print("Detected remote bloat directories:")
-                for d in found_dirs[:15]:
+            raw_dirs = [d.strip() for d in dirs_res.stdout.splitlines() if d.strip()]
+            rules = parse_filter_rules(self.filter_file.read_text(encoding="utf-8"))
+            bloat_roots = extract_bloat_roots(raw_dirs, rules)
+
+            if bloat_roots:
+                print(f"Detected remote bloat directories ({len(bloat_roots)} unique root locations):")
+                for d in bloat_roots[:15]:
                     print(f"  - {d}")
-                if len(found_dirs) > 15:
-                    print(f"  ... and {len(found_dirs) - 15} more directories.")
+                if len(bloat_roots) > 15:
+                    print(f"  ... and {len(bloat_roots) - 15} more directories.")
             else:
                 print("No ignored bloat directories detected on remote. Remote is clean!")
         finally:
             if cleanup_filter_path.exists():
                 cleanup_filter_path.unlink()
+
+        # Generate and save physical diagnostic report
+        report_file = report_path if report_path else Path(f"dev-sync-report-{target.name}.txt")
+        report_content = format_diagnostic_report(
+            target=target,
+            lsd_output=lsd_output,
+            duplicates=duplicates,
+            size_output=size_output,
+            bloat_roots=bloat_roots,
+        )
+        report_file.write_text(report_content, encoding="utf-8")
+        print(f"\n[REPORT] Full untruncated diagnostic report written to:")
+        print(f"         {report_file.resolve()}")
+        return report_file
 
     def cleanup(self, target: SyncTarget, dry_run: bool = False) -> None:
         """Purge remote build artifacts and transient caches using dynamic inverted filter."""

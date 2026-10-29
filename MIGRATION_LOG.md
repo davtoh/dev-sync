@@ -34,6 +34,13 @@
   - Verify all automated test suites pass (14/14 unit tests passing).
   - Developer review checkpoint and commit message suggestion.
 
+- [x] **Milestone 5: Remote Diagnostics Hardening, Bloat Root Extraction & Physical Report**
+  - Resolve Google Drive duplicate directory detection in Step [1/3] (`rclone lsd` parsing with deduplication advisory for `rclone dedupe`).
+  - Fix misclassification in Step [3/3] where `rclone lsf --dirs-only` printed all traversed source parent directories (`products/`, `core_libraries/`, `examples/`).
+  - Implement `extract_bloat_roots` in `dev_sync/filter.py` to collapse nested directories to their top-level root bloat folder (`products/rrtools/build/`, `node_modules/`).
+  - Implement untruncated physical report generation (`--report <path>` / `dev-sync-report-<target>.txt`).
+  - Added unit tests for duplicate detection, bloat root extraction, and diagnostic report generation (18/18 tests passing).
+
 ---
 
 ## Architectural Decision Records (ADRs)

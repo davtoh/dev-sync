@@ -83,6 +83,8 @@ phone_projects=$LOCAL_BASE/phone_projects|gdrive:phone_projects
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **List Configured Targets** | - | Read-only | `.\sync-projects.ps1 --list-targets` | `./sync-projects.sh --list-targets` | `python -m dev_sync --list-targets` |
 | **Inspect Remote Bloat** | `projects` | Read-only scan | `.\sync-projects.ps1 diagnose projects` | `./sync-projects.sh diagnose projects` | `python -m dev_sync diagnose projects` |
+| **Save Full Diagnostic Report** | `projects` | `--report <file>` | `.\sync-projects.ps1 diagnose projects --report report.txt` | `./sync-projects.sh diagnose projects --report report.txt` | `python -m dev_sync diagnose projects --report report.txt` |
+| **Consolidate Remote Duplicates** | `projects` | Google Drive dedupe | `rclone dedupe gdrive:projects` | `rclone dedupe gdrive:projects` | `rclone dedupe gdrive:projects` |
 | **Simulate Cleanup** | `phone_projects` | `--dry-run` | `.\sync-projects.ps1 cleanup phone_projects -DryRun` | `./sync-projects.sh cleanup phone_projects --dry-run` | `python -m dev_sync cleanup phone_projects --dry-run` |
 | **Purge Remote Bloat** | `all` | Live remote delete | `.\sync-projects.ps1 cleanup all` | `./sync-projects.sh cleanup all` | `python -m dev_sync cleanup all` |
 | **Pull Remote Changes** | `projects` | Copy remote to local | `.\sync-projects.ps1 pull projects` | `./sync-projects.sh pull projects` | `python -m dev_sync pull projects` |
