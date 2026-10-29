@@ -14,105 +14,25 @@ from typing import List, Optional
 
 from dev_sync.config import SyncTarget
 from dev_sync.filter import extract_bloat_roots, generate_cleanup_filter_file, parse_filter_rules
+from dev_sync.report import format_diagnostic_report, parse_lsd_duplicates
 
+__all__ = [
+    "DEFAULT_PACING_FLAGS",
+    "SyncEngine",
+    "format_diagnostic_report",
+    "parse_lsd_duplicates",
+]
 
-def parse_lsd_duplicates(output: str) -> dict[str, int]:
-    """Parse rclone lsd output and detect duplicate directory names.
-
-    Google Drive and certain cloud backends allow multiple folder objects
-    with the exact same name under the same parent directory.
-    """
-    folder_names: List[str] = []
-    for line in output.strip().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        parts = line.split(maxsplit=4)
-        if len(parts) >= 5:
-            folder_names.append(parts[4])
-    counts = Counter(folder_names)
-    return {name: c for name, c in counts.items() if c > 1}
-
-
-def format_diagnostic_report(
-    target: SyncTarget,
-    lsd_output: str,
-    duplicates: dict[str, int],
-    size_output: str,
-    bloat_roots: List[str],
-) -> str:
-    """Construct an untruncated, structured diagnostic report."""
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    lines = [
-        "=" * 80,
-        "dev-sync Diagnostic & Bloat Audit Report",
-        "=" * 80,
-        f"Target           : {target.name}",
-        f"Local Path       : {target.local_path}",
-        f"Remote Path      : {target.remote_path}",
-        f"Timestamp        : {timestamp}",
-        "",
-        "-" * 80,
-        "[1/3] Remote Connectivity & Folder Structure (max-depth 2)",
-        "-" * 80,
-        lsd_output.strip() if lsd_output.strip() else "(No directories listed or remote empty)",
-    ]
-
-    if duplicates:
-        lines.extend([
-            "",
-            "ADVISORY: Duplicate Folder Entities Detected on Remote Storage!",
-            "Providers such as Google Drive permit multiple folders with identical names",
-            "under the same parent. The following duplicate names were found:",
-        ])
-        for name, count in duplicates.items():
-            lines.append(f"  - '{name}' ({count} occurrences)")
-        lines.extend([
-            "",
-            "Remediation:",
-            f"  Run 'rclone dedupe {target.remote_path}' to inspect and merge duplicate folders.",
-        ])
-
-    lines.extend([
-        "",
-        "-" * 80,
-        "[2/3] Remote Bloat Size & Object Metrics",
-        "-" * 80,
-        size_output.strip() if size_output.strip() else "(No size output)",
-        "",
-        "-" * 80,
-        f"[3/3] Detected Remote Bloat Directories ({len(bloat_roots)} Unique Root Locations)",
-        "-" * 80,
-    ])
-
-    if bloat_roots:
-        lines.append("The following root directories match rclone-ignore rules and can be safely cleaned:")
-        for b in bloat_roots:
-            lines.append(f"  - {b}")
-    else:
-        lines.append("No ignored bloat directories detected on remote. Remote is clean!")
-
-    lines.extend([
-        "",
-        "-" * 80,
-        "Remediation & Execution Commands",
-        "-" * 80,
-        f"1. Preview remote bloat deletion without deleting source code:",
-        f"   python -m dev_sync cleanup {target.name} --dry-run",
-        "",
-        f"2. Execute remote bloat deletion:",
-        f"   python -m dev_sync cleanup {target.name}",
-    ])
-
-    if duplicates:
-        lines.extend([
-            "",
-            f"3. Consolidate duplicate remote folders (Google Drive dedupe):",
-            f"   rclone dedupe {target.remote_path}",
-        ])
-
-    lines.extend(["=" * 80, ""])
-    return "\n".join(lines)
+# Pacing and network shield flags for safe cloud remote operations
+# Prevents socket exhaustion, NIC hardware driver freezes, and cloud API rate-limiting
+DEFAULT_PACING_FLAGS: List[str] = [
+    "--tpslimit", "10",
+    "--tpslimit-burst", "10",
+    "--checkers", "4",
+    "--transfers", "4",
+    "--drive-pacer-min-sleep", "100ms",
+    "--fast-list",
+]
 
 
 class SyncEngine:
@@ -181,7 +101,7 @@ class SyncEngine:
 
             print(f"\n[2/3] Calculating ignored build artifacts & bloat on remote...")
             size_res = self._run_rclone(
-                ["size", target.remote_path, "--filter-from", str(cleanup_filter_path)],
+                ["size", target.remote_path, "--filter-from", str(cleanup_filter_path), *DEFAULT_PACING_FLAGS],
                 stream=False,
             )
             size_output = size_res.stdout.strip()
@@ -189,7 +109,17 @@ class SyncEngine:
 
             print(f"\n[3/3] Scanning top-level build folders on remote matching ignore rules...")
             dirs_res = self._run_rclone(
-                ["lsf", target.remote_path, "--dirs-only", "--recursive", "--max-depth", "3", "--filter-from", str(cleanup_filter_path)],
+                [
+                    "lsf",
+                    target.remote_path,
+                    "--dirs-only",
+                    "--recursive",
+                    "--max-depth",
+                    "3",
+                    "--filter-from",
+                    str(cleanup_filter_path),
+                    *DEFAULT_PACING_FLAGS,
+                ],
                 stream=False,
             )
             raw_dirs = [d.strip() for d in dirs_res.stdout.splitlines() if d.strip()]
@@ -222,8 +152,15 @@ class SyncEngine:
         print(f"         {report_file.resolve()}")
         return report_file
 
-    def cleanup(self, target: SyncTarget, dry_run: bool = False) -> None:
-        """Purge remote build artifacts and transient caches using dynamic inverted filter."""
+    def cleanup(self, target: SyncTarget, dry_run: bool = False, purge_roots: bool = True) -> None:
+        """Purge remote build artifacts and transient caches safely.
+
+        Uses dynamic inverted filter with safe API pacing (--tpslimit, --fast-list)
+        to prevent network adapter socket exhaustion and rate-limit panics.
+        When purge_roots is enabled, first scans and purges identified top-level
+        bloat root directories in atomic directory operations, then runs a paced
+        delete pass for any remaining loose ignored files.
+        """
         with tempfile.NamedTemporaryFile("w+", suffix=".txt", delete=False) as tf:
             cleanup_filter_path = Path(tf.name)
 
@@ -232,6 +169,41 @@ class SyncEngine:
             mode_label = "[DRY-RUN] " if dry_run else ""
             print(f"\n--> {mode_label}Cleaning up ignored transient build folders and caches on remote...")
 
+            # Stage 1: Atomic purge of detected bloat root folders (prevents file-by-file storms)
+            if purge_roots:
+                try:
+                    dirs_res = self._run_rclone(
+                        [
+                            "lsf",
+                            target.remote_path,
+                            "--dirs-only",
+                            "--recursive",
+                            "--max-depth",
+                            "3",
+                            "--filter-from",
+                            str(cleanup_filter_path),
+                            *DEFAULT_PACING_FLAGS,
+                        ],
+                        stream=False,
+                    )
+                    raw_out = dirs_res.stdout if isinstance(dirs_res.stdout, str) else ""
+                    raw_dirs = [d.strip() for d in raw_out.splitlines() if d.strip()]
+                    rules = parse_filter_rules(self.filter_file.read_text(encoding="utf-8"))
+                    bloat_roots = extract_bloat_roots(raw_dirs, rules)
+
+                    if bloat_roots:
+                        print(f"Purging {len(bloat_roots)} detected bloat root directory entities...")
+                        for br in bloat_roots:
+                            purge_target = f"{target.remote_path}/{br.rstrip('/')}"
+                            purge_cmd = ["purge", purge_target, *DEFAULT_PACING_FLAGS]
+                            if dry_run:
+                                purge_cmd.append("--dry-run")
+                            print(f"  - {mode_label}Purging directory: {purge_target}")
+                            self._run_rclone(purge_cmd)
+                except Exception as ex:
+                    print(f"Warning: Root directory purge scan bypassed ({ex}). Proceeding with paced delete.")
+
+            # Stage 2: Paced cleanup of loose ignored files / empty directories
             cmd_args = [
                 "delete",
                 target.remote_path,
@@ -239,6 +211,7 @@ class SyncEngine:
                 str(cleanup_filter_path),
                 "--rmdirs",
                 "-P",
+                *DEFAULT_PACING_FLAGS,
             ]
             if dry_run:
                 cmd_args.append("--dry-run")
@@ -261,6 +234,7 @@ class SyncEngine:
             "--filter-from",
             str(self.filter_file),
             "-P",
+            *DEFAULT_PACING_FLAGS,
         ]
         if dry_run:
             cmd_args.append("--dry-run")
@@ -282,6 +256,7 @@ class SyncEngine:
             "--filter-from",
             str(self.filter_file),
             "-P",
+            *DEFAULT_PACING_FLAGS,
         ]
         if dry_run:
             cmd_args.append("--dry-run")
@@ -301,6 +276,7 @@ class SyncEngine:
             target.remote_path,
             "--filter-from",
             str(self.filter_file),
+            *DEFAULT_PACING_FLAGS,
         ]
         try:
             self._run_rclone(cmd_args)

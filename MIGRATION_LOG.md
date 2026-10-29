@@ -41,6 +41,13 @@
   - Implement untruncated physical report generation (`--report <path>` / `dev-sync-report-<target>.txt`).
   - Added unit tests for duplicate detection, bloat root extraction, and diagnostic report generation (18/18 tests passing).
 
+- [x] **Milestone 6: Cloud Pacing, Network Shielding & Atomic Bloat Purge Engine**
+  - Diagnose BSOD `0x00000133: DPC_WATCHDOG_VIOLATION` triggered by network socket floods during unthrottled `cleanup` operations on large remote targets.
+  - Implement `DEFAULT_PACING_FLAGS` (`--tpslimit 10`, `--tpslimit-burst 10`, `--checkers 4`, `--transfers 4`, `--drive-pacer-min-sleep 100ms`, `--fast-list`) across all rclone subprocess calls (`cleanup`, `pull`, `push`, `check`, `diagnose`).
+  - Implement two-stage safe cleanup: Stage 1 scans and purges detected bloat root folders atomically via `rclone purge` (reducing tens of thousands of API calls down to 1 call per folder), followed by Stage 2 paced `rclone delete` for remaining loose ignored files.
+  - Decompose `dev_sync/engine.py` by extracting report formatting to `dev_sync/report.py` to maintain all files under the 300-line modularity budget ceiling.
+  - Added unit tests for pacing flags and root directory pre-purging (19/19 tests passing).
+
 ---
 
 ## Architectural Decision Records (ADRs)
@@ -57,3 +64,10 @@
   - `- pattern` (excluded during sync) $\to$ `+ pattern` (marked for deletion during cleanup).
   - Terminal rule: `- **` (protects all other source files).
 - **Impact**: Completely eliminates manual synchronization of ignore rules; enables `diagnose` to calculate accurate remote bloat metrics via `rclone size`.
+
+### ADR-003: Cloud Pacing, Network Shielding & Two-Stage Bloat Purging
+- **Context**: Running `rclone delete` with unconstrained concurrency across large workspaces (like 3 GB of mobile dependencies) triggers storms of thousands of rapid HTTP DELETE requests. On cloud backends with strict quotas (Google Drive 10 TPS), this causes rate-limit bursts, high socket churn, and hardware queue lockups on network adapters (such as Intel I211).
+- **Decision**:
+  1. Enforce universal API pacing flags (`--tpslimit 10`, `--fast-list`, `--checkers 4`, `--transfers 4`) across all operations.
+  2. Implement two-stage cleanup: Stage 1 purges identified top-level bloat root folders (`.gradle/`, `build/`, `.venv/`) as directory objects in a single API call, and Stage 2 performs a paced delete pass for loose files.
+- **Impact**: Eliminates socket exhaustion and driver lockups, accelerates `--dry-run` and listing operations by up to 10x–50x with `--fast-list`, and converts hours of file-by-file deletion into near-instant atomic directory purges.

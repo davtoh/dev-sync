@@ -62,6 +62,29 @@ class TestSyncEngine(unittest.TestCase):
         self.assertIn("--dry-run", call_args)
         self.assertIn("-P", call_args)
         self.assertIn("--filter-from", call_args)
+        self.assertIn("--tpslimit", call_args)
+        self.assertIn("--fast-list", call_args)
+
+    @patch("dev_sync.engine.SyncEngine._verify_rclone")
+    @patch("subprocess.run")
+    def test_cleanup_purges_detected_bloat_roots_first(self, mock_run, mock_verify):
+        def fake_run(cmd, *args, **kwargs):
+            m = MagicMock()
+            m.returncode = 0
+            if "lsf" in cmd:
+                m.stdout = "web/node_modules/\nweb/node_modules/subpkg/\n"
+            else:
+                m.stdout = ""
+            return m
+
+        mock_run.side_effect = fake_run
+        engine = SyncEngine(filter_file=self.filter_file)
+        engine.cleanup(self.target, dry_run=True)
+
+        calls = [c[0][0] for c in mock_run.call_args_list]
+        self.assertTrue(any(c[1] == "lsf" for c in calls))
+        self.assertTrue(any(c[1] == "purge" and "web/node_modules" in c[2] for c in calls))
+        self.assertTrue(any(c[1] == "delete" for c in calls))
 
     @patch("dev_sync.engine.SyncEngine._verify_rclone")
     @patch("subprocess.run")
