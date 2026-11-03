@@ -8,13 +8,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from collections import Counter
 from pathlib import Path
 from typing import List, Optional
 
 from dev_sync.config import SyncTarget
 from dev_sync.filter import extract_bloat_roots, generate_cleanup_filter_file, parse_filter_rules
 from dev_sync.report import format_diagnostic_report, parse_lsd_duplicates
+from dev_sync.summary import ExecutionSummary, build_summary, format_terminal_summary
 
 __all__ = [
     "DEFAULT_PACING_FLAGS",
@@ -53,19 +53,38 @@ class SyncEngine:
                 "Please install rclone (https://rclone.org) or add it to your PATH."
             )
 
-    def _run_rclone(self, args: List[str], stream: bool = True) -> subprocess.CompletedProcess[str]:
+    def _prepare_log(self, target: SyncTarget, action: str, custom_log: Optional[Path] = None) -> Path:
+        """Create a dedicated JSONL log file under .logs/ or custom path."""
+        if custom_log:
+            custom_log.parent.mkdir(parents=True, exist_ok=True)
+            return custom_log
+
+        logs_dir = Path(".logs")
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        return logs_dir / f"dev-sync-{action}-{target.name}-{ts}.jsonl"
+
+    def _run_rclone(
+        self,
+        args: List[str],
+        stream: bool = True,
+        log_file: Optional[Path] = None,
+        allow_diff_exit: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
         """Execute rclone with parameterized arguments (shell=False)."""
         self._verify_rclone()
         cmd = [self.rclone_binary] + args
+        if log_file:
+            cmd.extend(["--log-file", str(log_file), "--use-json-log", "--log-level", "INFO"])
 
         if stream:
             res = subprocess.run(cmd, shell=False, text=True)
-            if res.returncode != 0:
+            if res.returncode != 0 and not (allow_diff_exit and res.returncode == 1):
                 raise subprocess.CalledProcessError(res.returncode, cmd)
             return res
         else:
             res = subprocess.run(cmd, shell=False, text=True, capture_output=True)
-            if res.returncode != 0:
+            if res.returncode != 0 and not (allow_diff_exit and res.returncode == 1):
                 raise subprocess.CalledProcessError(res.returncode, cmd, output=res.stdout, stderr=res.stderr)
             return res
 
@@ -89,7 +108,6 @@ class SyncEngine:
         except subprocess.CalledProcessError:
             print(f"Warning: Could not list directory structure at '{target.remote_path}'. Remote may be empty or path does not exist yet.")
 
-        # Dynamically compile cleanup filter to inspect bloat
         with tempfile.NamedTemporaryFile("w+", suffix=".txt", delete=False) as tf:
             cleanup_filter_path = Path(tf.name)
 
@@ -138,7 +156,6 @@ class SyncEngine:
             if cleanup_filter_path.exists():
                 cleanup_filter_path.unlink()
 
-        # Generate and save physical diagnostic report
         report_file = report_path if report_path else Path(f"dev-sync-report-{target.name}.txt")
         report_content = format_diagnostic_report(
             target=target,
@@ -148,28 +165,28 @@ class SyncEngine:
             bloat_roots=bloat_roots,
         )
         report_file.write_text(report_content, encoding="utf-8")
-        print(f"\n[REPORT] Full untruncated diagnostic report written to:")
-        print(f"         {report_file.resolve()}")
+        print(f"\n[REPORT] Full untruncated diagnostic report written to:\n         {report_file.resolve()}")
         return report_file
 
-    def cleanup(self, target: SyncTarget, dry_run: bool = False, purge_roots: bool = True) -> None:
-        """Purge remote build artifacts and transient caches safely.
-
-        Uses dynamic inverted filter with safe API pacing (--tpslimit, --fast-list)
-        to prevent network adapter socket exhaustion and rate-limit panics.
-        When purge_roots is enabled, first scans and purges identified top-level
-        bloat root directories in atomic directory operations, then runs a paced
-        delete pass for any remaining loose ignored files.
-        """
+    def cleanup(
+        self,
+        target: SyncTarget,
+        dry_run: bool = False,
+        purge_roots: bool = True,
+        log_path: Optional[Path] = None,
+        show_summary: bool = True,
+    ) -> Optional[ExecutionSummary]:
+        """Purge remote build artifacts and transient caches safely."""
         with tempfile.NamedTemporaryFile("w+", suffix=".txt", delete=False) as tf:
             cleanup_filter_path = Path(tf.name)
+
+        active_log = self._prepare_log(target, "cleanup", log_path)
 
         try:
             generate_cleanup_filter_file(self.filter_file, cleanup_filter_path)
             mode_label = "[DRY-RUN] " if dry_run else ""
             print(f"\n--> {mode_label}Cleaning up ignored transient build folders and caches on remote...")
 
-            # Stage 1: Atomic purge of detected bloat root folders (prevents file-by-file storms)
             if purge_roots:
                 try:
                     dirs_res = self._run_rclone(
@@ -199,11 +216,10 @@ class SyncEngine:
                             if dry_run:
                                 purge_cmd.append("--dry-run")
                             print(f"  - {mode_label}Purging directory: {purge_target}")
-                            self._run_rclone(purge_cmd)
+                            self._run_rclone(purge_cmd, log_file=active_log)
                 except Exception as ex:
                     print(f"Warning: Root directory purge scan bypassed ({ex}). Proceeding with paced delete.")
 
-            # Stage 2: Paced cleanup of loose ignored files / empty directories
             cmd_args = [
                 "delete",
                 target.remote_path,
@@ -216,16 +232,29 @@ class SyncEngine:
             if dry_run:
                 cmd_args.append("--dry-run")
 
-            self._run_rclone(cmd_args)
+            self._run_rclone(cmd_args, log_file=active_log)
+
+            if show_summary:
+                summary = build_summary(target.name, "cleanup", dry_run, active_log)
+                print("\n" + format_terminal_summary(summary))
+                return summary
+            return None
         finally:
             if cleanup_filter_path.exists():
                 cleanup_filter_path.unlink()
 
-    def pull(self, target: SyncTarget, dry_run: bool = False) -> None:
+    def pull(
+        self,
+        target: SyncTarget,
+        dry_run: bool = False,
+        log_path: Optional[Path] = None,
+        show_summary: bool = True,
+    ) -> Optional[ExecutionSummary]:
         """Download remote files to local, filtering out ignored artifacts."""
         target.local_path.mkdir(parents=True, exist_ok=True)
         mode_label = "[DRY-RUN] " if dry_run else ""
         print(f"\n--> {mode_label}Pulling from '{target.remote_path}' into '{target.local_path}'...")
+        active_log = self._prepare_log(target, "pull", log_path)
 
         cmd_args = [
             "copy",
@@ -239,15 +268,28 @@ class SyncEngine:
         if dry_run:
             cmd_args.append("--dry-run")
 
-        self._run_rclone(cmd_args)
+        self._run_rclone(cmd_args, log_file=active_log)
 
-    def push(self, target: SyncTarget, dry_run: bool = False) -> None:
+        if show_summary:
+            summary = build_summary(target.name, "pull", dry_run, active_log)
+            print("\n" + format_terminal_summary(summary))
+            return summary
+        return None
+
+    def push(
+        self,
+        target: SyncTarget,
+        dry_run: bool = False,
+        log_path: Optional[Path] = None,
+        show_summary: bool = True,
+    ) -> Optional[ExecutionSummary]:
         """Upload local files to remote, filtering out ignored artifacts."""
         if not target.local_path.exists():
             raise FileNotFoundError(f"Cannot push: local directory does not exist at '{target.local_path}'")
 
         mode_label = "[DRY-RUN] " if dry_run else ""
         print(f"\n--> {mode_label}Pushing from '{target.local_path}' to '{target.remote_path}'...")
+        active_log = self._prepare_log(target, "push", log_path)
 
         cmd_args = [
             "copy",
@@ -261,15 +303,28 @@ class SyncEngine:
         if dry_run:
             cmd_args.append("--dry-run")
 
-        self._run_rclone(cmd_args)
+        self._run_rclone(cmd_args, log_file=active_log)
 
-    def check(self, target: SyncTarget) -> None:
+        if show_summary:
+            summary = build_summary(target.name, "push", dry_run, active_log)
+            print("\n" + format_terminal_summary(summary))
+            return summary
+        return None
+
+    def check(
+        self,
+        target: SyncTarget,
+        log_path: Optional[Path] = None,
+        show_summary: bool = True,
+    ) -> Optional[ExecutionSummary]:
         """Compare local and remote files to identify differences."""
         if not target.local_path.exists():
             print(f"Warning: Local directory does not exist yet: '{target.local_path}'")
-            return
+            return None
 
         print(f"\n--> Checking synchronization differences between '{target.local_path}' and '{target.remote_path}'...")
+        active_log = self._prepare_log(target, "check", log_path)
+
         cmd_args = [
             "check",
             str(target.local_path),
@@ -278,11 +333,10 @@ class SyncEngine:
             str(self.filter_file),
             *DEFAULT_PACING_FLAGS,
         ]
-        try:
-            self._run_rclone(cmd_args)
-        except subprocess.CalledProcessError as e:
-            # rclone check returns 1 when differences are found
-            if e.returncode == 1:
-                print("\nDifferences detected between local and remote.")
-            else:
-                raise
+        self._run_rclone(cmd_args, log_file=active_log, allow_diff_exit=True)
+
+        if show_summary:
+            summary = build_summary(target.name, "check", False, active_log)
+            print("\n" + format_terminal_summary(summary))
+            return summary
+        return None

@@ -159,6 +159,50 @@ class TestSyncEngine(unittest.TestCase):
         self.assertNotIn("web_and_services/node_modules/pkg/", content)  # collapsed to root
         self.assertIn("rclone dedupe", content)
 
+    def test_cli_parse_log_and_no_summary_flags(self):
+        args = parse_args(["push", "projects", "--log", "custom.jsonl", "--no-summary"])
+        self.assertEqual(args.action, "push")
+        self.assertEqual(args.target, "projects")
+        self.assertEqual(args.log, Path("custom.jsonl"))
+        self.assertTrue(args.no_summary)
+
+    @patch("dev_sync.engine.SyncEngine._verify_rclone")
+    @patch("subprocess.run")
+    def test_push_generates_summary_and_log(self, mock_run, mock_verify):
+        mock_run.return_value = MagicMock(returncode=0)
+        self.target.local_path.mkdir(parents=True, exist_ok=True)
+        custom_log = self.base / "push_test.jsonl"
+        custom_log.write_text(
+            '{"level":"notice","msg":"Skipped copy as --dry-run is set","skipped":"copy","size":100,"object":"products/rrtools/main.py"}\n',
+            encoding="utf-8",
+        )
+
+        engine = SyncEngine(filter_file=self.filter_file)
+        summary = engine.push(self.target, dry_run=True, log_path=custom_log, show_summary=True)
+
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary.copied_count, 1)
+        self.assertIn("products/rrtools/", summary.root_stats)
+
+    @patch("dev_sync.engine.SyncEngine._verify_rclone")
+    @patch("subprocess.run")
+    def test_check_generates_summary_and_handles_diff_exit_code(self, mock_run, mock_verify):
+        # rclone check returns 1 when differences are found
+        mock_run.return_value = MagicMock(returncode=1)
+        self.target.local_path.mkdir(parents=True, exist_ok=True)
+        custom_log = self.base / "check_test.jsonl"
+        custom_log.write_text(
+            '{"level":"error","msg":"sizes differ","object":"products/rrtools/main.py"}\n',
+            encoding="utf-8",
+        )
+
+        engine = SyncEngine(filter_file=self.filter_file)
+        summary = engine.check(self.target, log_path=custom_log, show_summary=True)
+
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary.diff_count, 1)
+        self.assertIn("products/rrtools/", summary.root_stats)
+
 
 if __name__ == "__main__":
     unittest.main()

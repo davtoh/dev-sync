@@ -35,5 +35,8 @@ desktop.ini
 sync-targets.conf
 !sync-targets.conf.example
 
-# Logs and dry-run outputs
+# Logs, diagnostic reports and dry-run outputs
 *.log
+*.jsonl
+.logs/
+dev-sync-report-*.txt

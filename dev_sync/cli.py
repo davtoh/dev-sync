@@ -64,6 +64,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Optional path to save physical diagnostic report (default: dev-sync-report-<target>.txt).",
     )
     parser.add_argument(
+        "--log",
+        type=Path,
+        help="Optional path to save structured JSONL execution event log (default: .logs/dev-sync-*.jsonl).",
+    )
+    parser.add_argument(
+        "--no-summary",
+        action="store_true",
+        help="Suppress the formatted execution summary table at the end of the run.",
+    )
+    parser.add_argument(
         "--config",
         type=Path,
         help="Path to sync-targets.conf configuration file.",
@@ -174,17 +184,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"Local : {t.local_path}")
         print(f"Remote: {t.remote_path}")
 
+        show_sum = not args.no_summary
         try:
             if args.action == "diagnose":
                 engine.diagnose(t, report_path=args.report)
             elif args.action == "cleanup":
-                engine.cleanup(t, dry_run=args.dry_run)
+                engine.cleanup(t, dry_run=args.dry_run, log_path=args.log, show_summary=show_sum)
             elif args.action == "pull":
-                engine.pull(t, dry_run=args.dry_run)
+                engine.pull(t, dry_run=args.dry_run, log_path=args.log, show_summary=show_sum)
             elif args.action == "push":
-                engine.push(t, dry_run=args.dry_run)
+                engine.push(t, dry_run=args.dry_run, log_path=args.log, show_summary=show_sum)
             elif args.action == "check":
-                engine.check(t)
+                engine.check(t, log_path=args.log, show_summary=show_sum)
         except Exception as e:
             print(f"\n[ERROR] Action '{args.action}' failed for target '{t.name}': {e}", file=sys.stderr)
             return 1

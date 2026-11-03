@@ -48,6 +48,14 @@
   - Decompose `dev_sync/engine.py` by extracting report formatting to `dev_sync/report.py` to maintain all files under the 300-line modularity budget ceiling.
   - Added unit tests for pacing flags and root directory pre-purging (19/19 tests passing).
 
+- [x] **Milestone 7: Dual-Stream Execution Summary Engine, Root-Directory Rollup & .git Bloat Protection**
+  - Diagnose terminal scrolling floods during large dry-runs where hundreds of file entries push initial output out of view.
+  - Implement `dev_sync/summary.py` providing structured JSONL log parsing, root directory extraction (`extract_root_folder`), action classification (copy, overwrite, delete, error, difference), and risk assessment.
+  - Add end-of-run formatted execution summary table guaranteed to stay in view at the end of every `push`, `pull`, `cleanup`, and `check` run.
+  - Implement structured persistent logging to `.logs/dev-sync-<action>-<target>-<timestamp>.jsonl` with CLI overrides (`--log <path>`, `--no-summary`).
+  - Add `- .git/**` to `rclone-ignore.txt` to eliminate loose git object rate-limiting and eradicate `file not in Local file system at //` errors.
+  - Add comprehensive unit tests in `tests/test_summary.py` and `tests/test_engine.py` (28/28 tests passing).
+
 ---
 
 ## Architectural Decision Records (ADRs)
@@ -71,3 +79,12 @@
   1. Enforce universal API pacing flags (`--tpslimit 10`, `--fast-list`, `--checkers 4`, `--transfers 4`) across all operations.
   2. Implement two-stage cleanup: Stage 1 purges identified top-level bloat root folders (`.gradle/`, `build/`, `.venv/`) as directory objects in a single API call, and Stage 2 performs a paced delete pass for loose files.
 - **Impact**: Eliminates socket exhaustion and driver lockups, accelerates `--dry-run` and listing operations by up to 10x–50x with `--fast-list`, and converts hours of file-by-file deletion into near-instant atomic directory purges.
+
+### ADR-004: Dual-Stream Structured Logging, Root-Directory Rollup & Git Metadata Exclusion
+- **Context**: During large sync or dry-run operations, rclone prints hundreds of file entries to stderr, pushing initial entries out of terminal buffer view. Users could not tell which project root folders were being touched or if unwanted folders were modified. Concurrently, syncing `.git/` repositories across cloud storage triggered hundreds of loose hash object errors (`ERROR : .../.git/objects/...: file not in Local file system`) and threatened cloud API TPS limits.
+- **Decision**:
+  1. Add `- .git/**` to `rclone-ignore.txt` so version control loose hashes are never synced over cloud drives.
+  2. Implement dual-stream execution: rclone runs with `-P` to stdout (interactive progress without line floods) while logging structured JSON events to `--log-file <path> --use-json-log --log-level INFO`.
+  3. Aggregate events in `dev_sync/summary.py` into a high-density, readable terminal box table ("Execution Summary") grouping files by root folder with overwrite and deletion risk alerts.
+  4. Automatically preserve detailed JSONL event logs under `.logs/` for offline inspection or scripted post-processing.
+- **Impact**: Terminal view is uncluttered; users instantly see which project root folders are affected; overwrite and deletion risks are highlighted before execution; and `.git` loose object errors are permanently eliminated.

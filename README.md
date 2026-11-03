@@ -25,11 +25,14 @@ dev-sync/
 │   ├── cli.py                 # Argument parser & feedback formatter
 │   ├── config.py              # Portable path resolver ($LOCAL_BASE, $HOME)
 │   ├── engine.py              # Parameterized rclone subprocess runner
-│   └── filter.py              # Inverted cleanup filter compiler
+│   ├── filter.py              # Inverted cleanup filter compiler
+│   ├── report.py              # Remote diagnostics & physical report formatter
+│   └── summary.py             # Event log parser, root folder rollup & risk engine
 └── tests/                     # Automated unit test suite
     ├── test_config.py
     ├── test_engine.py
-    └── test_filter.py
+    ├── test_filter.py
+    └── test_summary.py
 ```
 
 ---
@@ -87,8 +90,10 @@ phone_projects=$LOCAL_BASE/phone_projects|gdrive:phone_projects
 | **Consolidate Remote Duplicates** | `projects` | Google Drive dedupe | `rclone dedupe gdrive:projects` | `rclone dedupe gdrive:projects` | `rclone dedupe gdrive:projects` |
 | **Simulate Cleanup** | `phone_projects` | `--dry-run` | `.\sync-projects.ps1 cleanup phone_projects -DryRun` | `./sync-projects.sh cleanup phone_projects --dry-run` | `python -m dev_sync cleanup phone_projects --dry-run` |
 | **Purge Remote Bloat** | `all` | Live remote delete | `.\sync-projects.ps1 cleanup all` | `./sync-projects.sh cleanup all` | `python -m dev_sync cleanup all` |
+| **Pull Preview with Summary** | `projects` | `--dry-run` | `.\sync-projects.ps1 pull projects -DryRun` | `./sync-projects.sh pull projects --dry-run` | `python -m dev_sync pull projects --dry-run` |
+| **Push Preview with Summary** | `projects` | `--dry-run` | `.\sync-projects.ps1 push projects -DryRun` | `./sync-projects.sh push projects --dry-run` | `python -m dev_sync push projects --dry-run` |
+| **Save Structured Event Log** | `projects` | `--log <path>` | `.\sync-projects.ps1 push projects --log run.jsonl` | `./sync-projects.sh push projects --log run.jsonl` | `python -m dev_sync push projects --log run.jsonl` |
 | **Pull Remote Changes** | `projects` | Copy remote to local | `.\sync-projects.ps1 pull projects` | `./sync-projects.sh pull projects` | `python -m dev_sync pull projects` |
-| **Pull Preview** | `all` | `--dry-run` | `.\sync-projects.ps1 pull all -DryRun` | `./sync-projects.sh pull all --dry-run` | `python -m dev_sync pull all --dry-run` |
 | **Push Local Changes** | `projects` | Copy local to remote | `.\sync-projects.ps1 push projects` | `./sync-projects.sh push projects` | `python -m dev_sync push projects` |
 | **Compare Differences** | `projects` | Check hashes/size | `.\sync-projects.ps1 check projects` | `./sync-projects.sh check projects` | `python -m dev_sync check projects` |
 | **Ad-Hoc Custom Sync** | `custom` | Direct parameters | `.\sync-projects.ps1 push app $HOME/app gdrive:app -DryRun` | `./sync-projects.sh push app "$HOME/app" "gdrive:app" --dry-run` | `python -m dev_sync push app "$HOME/app" "gdrive:app" --dry-run` |
@@ -147,3 +152,23 @@ If Google Drive for Desktop is consuming excessive local disk storage:
    - In File Explorer / Finder, right-click your projects folder inside Google Drive → **Offline access** → choose **Online only**.
 3. **Purge Cache:**
    - In Google Drive Preferences → **Settings (Gear)**, locate **Local cached files directory** and purge or limit the cache size.
+
+---
+
+## 8. Execution Summary & Git Metadata Protection
+
+### Root-Directory Rollup & Risk Assessment
+During large synchronization or cleanup runs, terminal outputs can produce hundreds of lines that scroll out of view. `dev-sync` solves this with an automatic high-density **Execution Summary** printed at the very end of every `push`, `pull`, `cleanup`, and `check` command:
+
+- **Root Directory Rollup**: Aggregates affected files into high-level project roots (e.g. `products/rrtools/`, `phone_projects/`) with counts and transferred sizes.
+- **Data Overwrite Warnings**: Highlights whenever existing destination files will be overwritten by incoming changes.
+- **Data Loss Alerts**: Warns explicitly when files are slated for permanent deletion.
+- **Persistent Structured Logging**: Untruncated JSON logs are automatically captured in `.logs/dev-sync-*.jsonl` (or `--log <custom_path>`) for script processing or historical audit.
+
+### Why `.git/` is Excluded
+`rclone-ignore.txt` explicitly excludes `- .git/**`. Synchronizing `.git/` directories across cloud storage creates severe operational hazards:
+- Thousands of loose 1 KB hash objects (`.git/objects/ff/...`) rapidly trigger cloud provider 10-TPS rate limits (HTTP 429).
+- Garbage collection (`git gc`) or branches create hash mismatches resulting in `ERROR : ... file not in Local file system`.
+- Cloud sync engines do not preserve Git file locking or packfile integrity, risking repository corruption.
+
+Source code, commit histories, and branches should be synchronized via authoritative Git remotes (`git push`/`git pull` to GitHub/GitLab), while `dev-sync` manages active uncommitted project files and build configurations across machines.

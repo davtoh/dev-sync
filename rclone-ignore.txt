@@ -44,6 +44,10 @@
 - .svelte-kit/**
 - .turbo/**
 
+# Version control repositories & internal object caches
+# (Prevents syncing loose git hashes that exhaust cloud API TPS and trigger rate-limits)
+- .git/**
+
 # IDEs, OS metadata & system cache files
 - .idea/**
 - .vscode/**
