@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime
+import fnmatch
 import os
 import shutil
 import subprocess
@@ -12,7 +14,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from dev_sync.config import SyncTarget
-from dev_sync.filter import extract_bloat_roots, generate_cleanup_filter_file, parse_filter_rules
+from dev_sync.filter import extract_bloat_roots, parse_filter_rules, resolve_target_filters
 from dev_sync.report import format_diagnostic_report, parse_lsd_duplicates
 from dev_sync.summary import ExecutionSummary, build_summary, format_terminal_summary
 
@@ -88,7 +90,34 @@ class SyncEngine:
                 raise subprocess.CalledProcessError(res.returncode, cmd, output=res.stdout, stderr=res.stderr)
             return res
 
-    def diagnose(self, target: SyncTarget, report_path: Optional[Path] = None) -> Path:
+    @contextlib.contextmanager
+    def _target_filters(self, target: SyncTarget):
+        """Resolve and manage temporary target-specific filter files."""
+        sync_filter, cleanup_filter, is_temp = resolve_target_filters(self.filter_file, target)
+        try:
+            yield sync_filter, cleanup_filter
+        finally:
+            if cleanup_filter.exists():
+                cleanup_filter.unlink()
+            if is_temp and sync_filter.exists():
+                sync_filter.unlink()
+
+    def _format_exclude_args(self, extra_excludes: Optional[List[str]] = None) -> List[str]:
+        """Format extra exclusion patterns as rclone command arguments."""
+        args: List[str] = []
+        if extra_excludes:
+            for pat in extra_excludes:
+                clean = pat.strip()
+                if clean:
+                    args.extend(["--exclude", clean])
+        return args
+
+    def diagnose(
+        self,
+        target: SyncTarget,
+        report_path: Optional[Path] = None,
+        extra_excludes: Optional[List[str]] = None,
+    ) -> Path:
         """Inspect remote connectivity, detect duplicates, and calculate exact ignored bloat size."""
         print(f"\n[1/3] Checking remote connectivity for '{target.remote_path}'...")
         lsd_output = ""
@@ -108,18 +137,15 @@ class SyncEngine:
         except subprocess.CalledProcessError:
             print(f"Warning: Could not list directory structure at '{target.remote_path}'. Remote may be empty or path does not exist yet.")
 
-        with tempfile.NamedTemporaryFile("w+", suffix=".txt", delete=False) as tf:
-            cleanup_filter_path = Path(tf.name)
-
         size_output = ""
         bloat_roots: List[str] = []
 
-        try:
-            generate_cleanup_filter_file(self.filter_file, cleanup_filter_path)
+        with self._target_filters(target) as (_, cleanup_filter):
+            exclude_args = self._format_exclude_args(extra_excludes)
 
             print(f"\n[2/3] Calculating ignored build artifacts & bloat on remote...")
             size_res = self._run_rclone(
-                ["size", target.remote_path, "--filter-from", str(cleanup_filter_path), *DEFAULT_PACING_FLAGS],
+                ["size", target.remote_path, *exclude_args, "--filter-from", str(cleanup_filter), *DEFAULT_PACING_FLAGS],
                 stream=False,
             )
             size_output = size_res.stdout.strip()
@@ -134,8 +160,9 @@ class SyncEngine:
                     "--recursive",
                     "--max-depth",
                     "3",
+                    *exclude_args,
                     "--filter-from",
-                    str(cleanup_filter_path),
+                    str(cleanup_filter),
                     *DEFAULT_PACING_FLAGS,
                 ],
                 stream=False,
@@ -152,9 +179,6 @@ class SyncEngine:
                     print(f"  ... and {len(bloat_roots) - 15} more directories.")
             else:
                 print("No ignored bloat directories detected on remote. Remote is clean!")
-        finally:
-            if cleanup_filter_path.exists():
-                cleanup_filter_path.unlink()
 
         report_file = report_path if report_path else Path(f"dev-sync-report-{target.name}.txt")
         report_content = format_diagnostic_report(
@@ -175,15 +199,13 @@ class SyncEngine:
         purge_roots: bool = True,
         log_path: Optional[Path] = None,
         show_summary: bool = True,
+        extra_excludes: Optional[List[str]] = None,
     ) -> Optional[ExecutionSummary]:
         """Purge remote build artifacts and transient caches safely."""
-        with tempfile.NamedTemporaryFile("w+", suffix=".txt", delete=False) as tf:
-            cleanup_filter_path = Path(tf.name)
-
         active_log = self._prepare_log(target, "cleanup", log_path)
+        exclude_args = self._format_exclude_args(extra_excludes)
 
-        try:
-            generate_cleanup_filter_file(self.filter_file, cleanup_filter_path)
+        with self._target_filters(target) as (_, cleanup_filter):
             mode_label = "[DRY-RUN] " if dry_run else ""
             print(f"\n--> {mode_label}Cleaning up ignored transient build folders and caches on remote...")
 
@@ -197,8 +219,9 @@ class SyncEngine:
                             "--recursive",
                             "--max-depth",
                             "3",
+                            *exclude_args,
                             "--filter-from",
-                            str(cleanup_filter_path),
+                            str(cleanup_filter),
                             *DEFAULT_PACING_FLAGS,
                         ],
                         stream=False,
@@ -207,6 +230,12 @@ class SyncEngine:
                     raw_dirs = [d.strip() for d in raw_out.splitlines() if d.strip()]
                     rules = parse_filter_rules(self.filter_file.read_text(encoding="utf-8"))
                     bloat_roots = extract_bloat_roots(raw_dirs, rules)
+
+                    if extra_excludes and bloat_roots:
+                        bloat_roots = [
+                            br for br in bloat_roots
+                            if not any(fnmatch.fnmatch(br.rstrip("/"), pat.strip().rstrip("/*")) for pat in extra_excludes)
+                        ]
 
                     if bloat_roots:
                         print(f"Purging {len(bloat_roots)} detected bloat root directory entities...")
@@ -223,8 +252,9 @@ class SyncEngine:
             cmd_args = [
                 "delete",
                 target.remote_path,
+                *exclude_args,
                 "--filter-from",
-                str(cleanup_filter_path),
+                str(cleanup_filter),
                 "--rmdirs",
                 "-P",
                 *DEFAULT_PACING_FLAGS,
@@ -233,15 +263,17 @@ class SyncEngine:
                 cmd_args.append("--dry-run")
 
             self._run_rclone(cmd_args, log_file=active_log)
+            return self._finish_summary(target.name, "cleanup", dry_run, active_log, show_summary)
 
-            if show_summary:
-                summary = build_summary(target.name, "cleanup", dry_run, active_log)
-                print("\n" + format_terminal_summary(summary))
-                return summary
-            return None
-        finally:
-            if cleanup_filter_path.exists():
-                cleanup_filter_path.unlink()
+    def _finish_summary(
+        self, target_name: str, action: str, dry_run: bool, log_path: Path, show_summary: bool
+    ) -> Optional[ExecutionSummary]:
+        """Optionally build and print terminal execution summary."""
+        if show_summary:
+            summary = build_summary(target_name, action, dry_run, log_path)
+            print("\n" + format_terminal_summary(summary))
+            return summary
+        return None
 
     def pull(
         self,
@@ -249,32 +281,25 @@ class SyncEngine:
         dry_run: bool = False,
         log_path: Optional[Path] = None,
         show_summary: bool = True,
+        extra_excludes: Optional[List[str]] = None,
     ) -> Optional[ExecutionSummary]:
         """Download remote files to local, filtering out ignored artifacts."""
         target.local_path.mkdir(parents=True, exist_ok=True)
         mode_label = "[DRY-RUN] " if dry_run else ""
         print(f"\n--> {mode_label}Pulling from '{target.remote_path}' into '{target.local_path}'...")
         active_log = self._prepare_log(target, "pull", log_path)
+        exclude_args = self._format_exclude_args(extra_excludes)
 
-        cmd_args = [
-            "copy",
-            target.remote_path,
-            str(target.local_path),
-            "--filter-from",
-            str(self.filter_file),
-            "-P",
-            *DEFAULT_PACING_FLAGS,
-        ]
-        if dry_run:
-            cmd_args.append("--dry-run")
+        with self._target_filters(target) as (sync_filter, _):
+            cmd_args = [
+                "copy", target.remote_path, str(target.local_path),
+                *exclude_args, "--filter-from", str(sync_filter), "-P", *DEFAULT_PACING_FLAGS,
+            ]
+            if dry_run:
+                cmd_args.append("--dry-run")
 
-        self._run_rclone(cmd_args, log_file=active_log)
-
-        if show_summary:
-            summary = build_summary(target.name, "pull", dry_run, active_log)
-            print("\n" + format_terminal_summary(summary))
-            return summary
-        return None
+            self._run_rclone(cmd_args, log_file=active_log)
+        return self._finish_summary(target.name, "pull", dry_run, active_log, show_summary)
 
     def push(
         self,
@@ -282,6 +307,7 @@ class SyncEngine:
         dry_run: bool = False,
         log_path: Optional[Path] = None,
         show_summary: bool = True,
+        extra_excludes: Optional[List[str]] = None,
     ) -> Optional[ExecutionSummary]:
         """Upload local files to remote, filtering out ignored artifacts."""
         if not target.local_path.exists():
@@ -290,32 +316,25 @@ class SyncEngine:
         mode_label = "[DRY-RUN] " if dry_run else ""
         print(f"\n--> {mode_label}Pushing from '{target.local_path}' to '{target.remote_path}'...")
         active_log = self._prepare_log(target, "push", log_path)
+        exclude_args = self._format_exclude_args(extra_excludes)
 
-        cmd_args = [
-            "copy",
-            str(target.local_path),
-            target.remote_path,
-            "--filter-from",
-            str(self.filter_file),
-            "-P",
-            *DEFAULT_PACING_FLAGS,
-        ]
-        if dry_run:
-            cmd_args.append("--dry-run")
+        with self._target_filters(target) as (sync_filter, _):
+            cmd_args = [
+                "copy", str(target.local_path), target.remote_path,
+                *exclude_args, "--filter-from", str(sync_filter), "-P", *DEFAULT_PACING_FLAGS,
+            ]
+            if dry_run:
+                cmd_args.append("--dry-run")
 
-        self._run_rclone(cmd_args, log_file=active_log)
-
-        if show_summary:
-            summary = build_summary(target.name, "push", dry_run, active_log)
-            print("\n" + format_terminal_summary(summary))
-            return summary
-        return None
+            self._run_rclone(cmd_args, log_file=active_log)
+        return self._finish_summary(target.name, "push", dry_run, active_log, show_summary)
 
     def check(
         self,
         target: SyncTarget,
         log_path: Optional[Path] = None,
         show_summary: bool = True,
+        extra_excludes: Optional[List[str]] = None,
     ) -> Optional[ExecutionSummary]:
         """Compare local and remote files to identify differences."""
         if not target.local_path.exists():
@@ -324,19 +343,12 @@ class SyncEngine:
 
         print(f"\n--> Checking synchronization differences between '{target.local_path}' and '{target.remote_path}'...")
         active_log = self._prepare_log(target, "check", log_path)
+        exclude_args = self._format_exclude_args(extra_excludes)
 
-        cmd_args = [
-            "check",
-            str(target.local_path),
-            target.remote_path,
-            "--filter-from",
-            str(self.filter_file),
-            *DEFAULT_PACING_FLAGS,
-        ]
-        self._run_rclone(cmd_args, log_file=active_log, allow_diff_exit=True)
-
-        if show_summary:
-            summary = build_summary(target.name, "check", False, active_log)
-            print("\n" + format_terminal_summary(summary))
-            return summary
-        return None
+        with self._target_filters(target) as (sync_filter, _):
+            cmd_args = [
+                "check", str(target.local_path), target.remote_path,
+                *exclude_args, "--filter-from", str(sync_filter), *DEFAULT_PACING_FLAGS,
+            ]
+            self._run_rclone(cmd_args, log_file=active_log, allow_diff_exit=True)
+        return self._finish_summary(target.name, "check", False, active_log, show_summary)

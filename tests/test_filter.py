@@ -6,13 +6,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from dev_sync.config import SyncTarget
 from dev_sync.filter import (
+    FilterRule,
     compile_cleanup_filter,
     compile_normalized_sync_filter,
     extract_bloat_roots,
     generate_cleanup_filter_file,
     normalize_pattern,
     parse_filter_rules,
+    resolve_target_filters,
 )
 
 
@@ -103,6 +106,115 @@ class TestFilterCompiler(unittest.TestCase):
         self.assertNotIn("products/rrtools/", bloat)
         self.assertNotIn("products/rrtools/src/", bloat)
         self.assertNotIn("research_and_experiments/servo_control/examples/", bloat)
+
+    def test_extract_bloat_roots_copy_folders(self):
+        rules = [
+            ("-", "* - copia*/**"),
+            ("-", "* - Copy*/**"),
+        ]
+        raw_traversed_dirs = [
+            "products/",
+            "products/rrtools/",
+            "products/rrtools - copia/",
+            "products/rrtools - copia/sub/",
+            "products/rrtools - copia (2)/",
+            "products/rrtools - copia (2)/sub/",
+            "products/my_app - Copy (3)/",
+        ]
+        bloat = extract_bloat_roots(raw_traversed_dirs, rules)
+        self.assertEqual(
+            bloat,
+            [
+                "products/my_app - Copy (3)/",
+                "products/rrtools - copia (2)/",
+                "products/rrtools - copia/",
+            ],
+        )
+        self.assertNotIn("products/", bloat)
+        self.assertNotIn("products/rrtools/", bloat)
+
+    def test_local_only_semantic_tag_protection(self):
+        sample = """
+        # Standard bloat
+        - build/**
+        # @local_only
+        - local_keys/**
+        -! secret_archive/**
+        """
+        rules = parse_filter_rules(sample)
+        self.assertEqual(len(rules), 3)
+
+        self.assertFalse(rules[0].is_local_only)
+        self.assertEqual(rules[0].pattern, "build/**")
+
+        self.assertTrue(rules[1].is_local_only)
+        self.assertEqual(rules[1].pattern, "local_keys/**")
+
+        self.assertTrue(rules[2].is_local_only)
+        self.assertEqual(rules[2].pattern, "secret_archive/**")
+
+        cleanup_text = compile_cleanup_filter(rules)
+        lines = [line.strip() for line in cleanup_text.splitlines() if line.strip() and not line.startswith("#")]
+
+        # Local-only rules MUST be protected (- pattern) during cleanup, NEVER deleted (+ pattern)!
+        self.assertIn("- local_keys/**", lines)
+        self.assertIn("- secret_archive/**", lines)
+        self.assertNotIn("+ local_keys/**", lines)
+        self.assertNotIn("+ secret_archive/**", lines)
+
+        # Standard bloat must still be targeted for deletion (+ pattern)
+        self.assertIn("+ build/**", lines)
+
+        # Ensure bloat roots extraction ignores local-only directories
+        traversed = ["build/", "local_keys/", "secret_archive/"]
+        bloat = extract_bloat_roots(traversed, rules)
+        self.assertEqual(bloat, ["build/"])
+        self.assertNotIn("local_keys/", bloat)
+        self.assertNotIn("secret_archive/", bloat)
+
+    def test_resolve_target_filters_with_syncignore_and_excludes(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            global_filter = base / "rclone-ignore.txt"
+            global_filter.write_text("- node_modules/**\n+ .env.example\n", encoding="utf-8")
+
+            local_project = base / "my_project"
+            local_project.mkdir()
+            syncignore = local_project / ".syncignore"
+            syncignore.write_text("- target_custom_bloat/**\n# @local_only\n- local_test_data/**\n", encoding="utf-8")
+
+            target = SyncTarget(
+                name="proj",
+                raw_local=str(local_project),
+                local_path=local_project,
+                remote_path="gdrive:proj",
+                excludes=("cli_extra/**",),
+            )
+
+            sync_filter, cleanup_filter, is_temp = resolve_target_filters(global_filter, target)
+            try:
+                self.assertTrue(is_temp)
+                self.assertTrue(sync_filter.exists())
+                self.assertTrue(cleanup_filter.exists())
+
+                sync_content = sync_filter.read_text(encoding="utf-8")
+                self.assertIn("- node_modules/**", sync_content)
+                self.assertIn("- target_custom_bloat/**", sync_content)
+                self.assertIn("- local_test_data/**", sync_content)
+                self.assertIn("- cli_extra/**", sync_content)
+
+                clean_content = cleanup_filter.read_text(encoding="utf-8")
+                self.assertIn("+ node_modules/**", clean_content)
+                self.assertIn("+ target_custom_bloat/**", clean_content)
+                self.assertIn("+ cli_extra/**", clean_content)
+                # local_test_data was tagged @local_only, so MUST be protected (-)!
+                self.assertIn("- local_test_data/**", clean_content)
+                self.assertNotIn("+ local_test_data/**", clean_content)
+            finally:
+                if sync_filter.exists() and is_temp:
+                    sync_filter.unlink()
+                if cleanup_filter.exists():
+                    cleanup_filter.unlink()
 
     def test_rclone_live_cleanup_safety(self):
         """End-to-end empirical verification of rclone filtering using mock filesystem."""

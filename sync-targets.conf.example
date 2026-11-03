@@ -1,6 +1,6 @@
 # ==============================================================================
 # Target configuration for dev-sync.
-# Format: <target_name>=<raw_local>|<remote_path>
+# Format: <target_name>=<raw_local>|<remote_path>[|exclude=<pattern1>;<pattern2>][|filter=<path>]
 #
 # Supported dynamic variables:
 #   $LOCAL_BASE : Automatically resolves to the parent directory of dev-sync
@@ -12,11 +12,20 @@
 # Supported remote backends:
 #   Any rclone-supported remote: Google Drive (gdrive:), AWS S3 (s3:),
 #   OneDrive (onedrive:), Dropbox, SFTP (sftp:), or local paths.
+#
+# Hierarchical ignore support:
+#   1. Global rules in rclone-ignore.txt apply to all targets.
+#   2. Local .syncignore or dev-sync-ignore.txt inside <raw_local> are auto-discovered.
+#   3. Target-specific excludes can be configured with |exclude=pat1;pat2
+#   4. Target-specific custom filters can be configured with |filter=path/to/filter.txt
 # ==============================================================================
 
 # Standard development workspaces
 projects=$LOCAL_BASE/projects|gdrive:projects
 phone_projects=$LOCAL_BASE/phone_projects|gdrive:phone_projects
+
+# Example of target with dedicated exclusions:
+# client_work=$LOCAL_BASE/client_work|gdrive:client_work|exclude=private_keys/**;local_data/**
 
 # Example of targeting user home directory:
 # docs=$HOME/Documents/dev-notes|gdrive:backup/notes

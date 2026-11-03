@@ -17,6 +17,19 @@ class SyncTarget:
     raw_local: str
     local_path: Path
     remote_path: str
+    excludes: tuple[str, ...] = ()
+    custom_filter: Optional[Path] = None
+
+
+def find_target_ignore_file(local_path: Path) -> Optional[Path]:
+    """Check for local target-level ignore file (.syncignore or dev-sync-ignore.txt)."""
+    if not local_path.exists():
+        return None
+    for candidate in [".syncignore", "dev-sync-ignore.txt"]:
+        target_file = local_path / candidate
+        if target_file.is_file():
+            return target_file
+    return None
 
 
 def get_default_local_base(repo_root: Optional[Path] = None) -> Path:
@@ -71,7 +84,14 @@ def resolve_local_path(raw_local: str, local_base: Optional[Path] = None) -> Pat
     return path
 
 
-def create_target(name: str, raw_local: str, remote_path: str, repo_root: Optional[Path] = None) -> SyncTarget:
+def create_target(
+    name: str,
+    raw_local: str,
+    remote_path: str,
+    repo_root: Optional[Path] = None,
+    excludes: tuple[str, ...] = (),
+    custom_filter: Optional[Path] = None,
+) -> SyncTarget:
     """Create a validated SyncTarget instance from target_name, raw_local, and remote_path."""
     name_clean = name.strip()
     raw_local_clean = raw_local.strip()
@@ -92,6 +112,8 @@ def create_target(name: str, raw_local: str, remote_path: str, repo_root: Option
         raw_local=raw_local_clean,
         local_path=resolved_local,
         remote_path=remote_clean,
+        excludes=excludes,
+        custom_filter=custom_filter,
     )
 
 
@@ -124,8 +146,36 @@ def load_targets(config_path: Path, repo_root: Optional[Path] = None) -> Dict[st
         if "|" not in mapping:
             raise ValueError(f"Invalid format at {config_path}:{line_num}: mapping must contain '|' (<local>|<remote>)")
 
-        raw_local, raw_remote = mapping.split("|", 1)
-        target = create_target(name, raw_local, raw_remote, repo_root)
+        parts = [p.strip() for p in mapping.split("|")]
+        raw_local, raw_remote = parts[0], parts[1]
+
+        target_excludes: list[str] = []
+        custom_filter_path: Optional[Path] = None
+
+        for opt in parts[2:]:
+            if opt.startswith("exclude=") or opt.startswith("excludes="):
+                _, val = opt.split("=", 1)
+                for pat in val.split(";"):
+                    clean_pat = pat.strip()
+                    if clean_pat:
+                        target_excludes.append(clean_pat)
+            elif opt.startswith("filter="):
+                _, val = opt.split("=", 1)
+                clean_val = val.strip()
+                if clean_val:
+                    cf = Path(clean_val)
+                    if not cf.is_absolute() and repo_root:
+                        cf = repo_root / cf
+                    custom_filter_path = cf
+
+        target = create_target(
+            name=name,
+            raw_local=raw_local,
+            remote_path=raw_remote,
+            repo_root=repo_root,
+            excludes=tuple(target_excludes),
+            custom_filter=custom_filter_path,
+        )
         targets[target.name] = target
 
     return targets

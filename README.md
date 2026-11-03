@@ -63,12 +63,12 @@ python -m dev_sync --test-filter
 
 ---
 
-## 3. Configuration (`sync-targets.conf`)
+## 3. Configuration & Hierarchical Ignores (`sync-targets.conf`)
 
 Target paths are defined with portable variables in `sync-targets.conf`:
 
 ```ini
-# Format: <target_name>=<raw_local>|<remote_path>
+# Format: <target_name>=<raw_local>|<remote_path>[|exclude=<pattern1>;<pattern2>][|filter=<path>]
 # Variables available:
 #   $LOCAL_BASE : Parent directory of dev-sync (or $DEV_SYNC_BASE environment variable)
 #   $HOME       : User home directory (~/ on Unix, %USERPROFILE% on Windows)
@@ -76,7 +76,28 @@ Target paths are defined with portable variables in `sync-targets.conf`:
 
 projects=$LOCAL_BASE/projects|gdrive:projects
 phone_projects=$LOCAL_BASE/phone_projects|gdrive:phone_projects
+
+# Target with dedicated exclusions:
+# client_work=$LOCAL_BASE/client_work|gdrive:client_work|exclude=private_keys/**;local_data/**
 ```
+
+### The 3-Tier Exclusion Hierarchy
+
+1. **Tier 1 (CLI)**: Use repeatable `--exclude <pattern>` flags for ad-hoc exclusions during any command:
+   ```bash
+   python -m dev_sync push projects --exclude "products/excel_enhancer/**" --dry-run
+   ```
+2. **Tier 2 (Target Configuration)**:
+   - **Local `.syncignore`**: Drop a `.syncignore` or `dev-sync-ignore.txt` into any project target root to self-manage exclusions.
+   - **Target Options**: Specify `|exclude=pat1;pat2` or `|filter=custom.txt` in `sync-targets.conf`.
+3. **Tier 3 (Semantic Intent & Cloud-Safe Archives)**:
+   - Standard exclusions (`- pattern`) are considered transient bloat and deleted on the cloud during `cleanup`.
+   - To keep local files from syncing without ever deleting them from the cloud, tag them with `# @local_only` or inline `-! pattern`:
+     ```text
+     # @local_only
+     - offline_datasets/**
+     -! private_keys/**
+     ```
 
 ---
 
@@ -92,6 +113,7 @@ phone_projects=$LOCAL_BASE/phone_projects|gdrive:phone_projects
 | **Purge Remote Bloat** | `all` | Live remote delete | `.\sync-projects.ps1 cleanup all` | `./sync-projects.sh cleanup all` | `python -m dev_sync cleanup all` |
 | **Pull Preview with Summary** | `projects` | `--dry-run` | `.\sync-projects.ps1 pull projects -DryRun` | `./sync-projects.sh pull projects --dry-run` | `python -m dev_sync pull projects --dry-run` |
 | **Push Preview with Summary** | `projects` | `--dry-run` | `.\sync-projects.ps1 push projects -DryRun` | `./sync-projects.sh push projects --dry-run` | `python -m dev_sync push projects --dry-run` |
+| **Ad-Hoc One-Off Exclusion** | `projects` | `--exclude <pat>` | `.\sync-projects.ps1 push projects -DryRun` | `./sync-projects.sh push projects --exclude "temp/**" --dry-run` | `python -m dev_sync push projects --exclude "temp/**" --dry-run` |
 | **Save Structured Event Log** | `projects` | `--log <path>` | `.\sync-projects.ps1 push projects --log run.jsonl` | `./sync-projects.sh push projects --log run.jsonl` | `python -m dev_sync push projects --log run.jsonl` |
 | **Pull Remote Changes** | `projects` | Copy remote to local | `.\sync-projects.ps1 pull projects` | `./sync-projects.sh pull projects` | `python -m dev_sync pull projects` |
 | **Push Local Changes** | `projects` | Copy local to remote | `.\sync-projects.ps1 push projects` | `./sync-projects.sh push projects` | `python -m dev_sync push projects` |

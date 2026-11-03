@@ -166,6 +166,31 @@ class TestSyncEngine(unittest.TestCase):
         self.assertEqual(args.log, Path("custom.jsonl"))
         self.assertTrue(args.no_summary)
 
+    def test_cli_parse_exclude_flags(self):
+        args = parse_args(["push", "projects", "--exclude", "products/* - copia*/**", "--exclude", "*.tmp"])
+        self.assertEqual(args.action, "push")
+        self.assertEqual(args.exclude, ["products/* - copia*/**", "*.tmp"])
+
+    @patch("dev_sync.engine.SyncEngine._verify_rclone")
+    @patch("subprocess.run")
+    def test_push_with_extra_excludes(self, mock_run, mock_verify):
+        mock_run.return_value = MagicMock(returncode=0)
+        self.target.local_path.mkdir(parents=True, exist_ok=True)
+        engine = SyncEngine(filter_file=self.filter_file)
+        engine.push(self.target, dry_run=True, extra_excludes=["products/* - copia*/**", "temp/**"])
+
+        call_args = mock_run.call_args[0][0]
+        self.assertEqual(call_args[0], "rclone")
+        self.assertEqual(call_args[1], "copy")
+        self.assertIn("--exclude", call_args)
+        self.assertIn("products/* - copia*/**", call_args)
+        self.assertIn("temp/**", call_args)
+
+        # Ensure --exclude precedes --filter-from
+        ex_idx = call_args.index("--exclude")
+        ff_idx = call_args.index("--filter-from")
+        self.assertLess(ex_idx, ff_idx, "--exclude should precede --filter-from")
+
     @patch("dev_sync.engine.SyncEngine._verify_rclone")
     @patch("subprocess.run")
     def test_push_generates_summary_and_log(self, mock_run, mock_verify):

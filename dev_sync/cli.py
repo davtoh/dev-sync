@@ -84,6 +84,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Path to rclone-ignore.txt filter file.",
     )
     parser.add_argument(
+        "--exclude",
+        action="append",
+        dest="exclude",
+        default=[],
+        help="Additional exclusion pattern to filter out (can be specified multiple times).",
+    )
+    parser.add_argument(
         "--list-targets",
         action="store_true",
         help="List all configured sync targets and exit.",
@@ -187,15 +194,38 @@ def main(argv: Optional[List[str]] = None) -> int:
         show_sum = not args.no_summary
         try:
             if args.action == "diagnose":
-                engine.diagnose(t, report_path=args.report)
+                engine.diagnose(t, report_path=args.report, extra_excludes=args.exclude)
             elif args.action == "cleanup":
-                engine.cleanup(t, dry_run=args.dry_run, log_path=args.log, show_summary=show_sum)
+                engine.cleanup(
+                    t,
+                    dry_run=args.dry_run,
+                    log_path=args.log,
+                    show_summary=show_sum,
+                    extra_excludes=args.exclude,
+                )
             elif args.action == "pull":
-                engine.pull(t, dry_run=args.dry_run, log_path=args.log, show_summary=show_sum)
+                engine.pull(
+                    t,
+                    dry_run=args.dry_run,
+                    log_path=args.log,
+                    show_summary=show_sum,
+                    extra_excludes=args.exclude,
+                )
             elif args.action == "push":
-                engine.push(t, dry_run=args.dry_run, log_path=args.log, show_summary=show_sum)
+                engine.push(
+                    t,
+                    dry_run=args.dry_run,
+                    log_path=args.log,
+                    show_summary=show_sum,
+                    extra_excludes=args.exclude,
+                )
             elif args.action == "check":
-                engine.check(t, log_path=args.log, show_summary=show_sum)
+                engine.check(
+                    t,
+                    log_path=args.log,
+                    show_summary=show_sum,
+                    extra_excludes=args.exclude,
+                )
         except Exception as e:
             print(f"\n[ERROR] Action '{args.action}' failed for target '{t.name}': {e}", file=sys.stderr)
             return 1

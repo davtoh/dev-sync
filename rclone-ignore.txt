@@ -65,3 +65,28 @@
 - *.key
 - *.jks
 - *.keystore
+
+# OS duplicate and backup files & folders across all directories
+# Matches: 'folder - copia', 'folder - copia (2)', 'folder - Copy', 'folder - Copy (2)', 'folder copy'
+- * - copia*/**
+- * - copia*
+- * - Copy*/**
+- * - Copy*
+- * copy*/**
+- * copy*
+
+# ==============================================================================
+# Semantic Policy Directives:
+# Standard exclusions ('- ') are treated as transient bloat (excluded from sync,
+# and purged on remote during 'cleanup').
+#
+# To permanently protect local private archives, offline keys, or datasets so
+# they are NEVER synced, but also NEVER deleted from cloud storage during 'cleanup',
+# precede the rule with '# @local_only' or use inline prefix '-! ':
+#
+# Examples:
+#   # @local_only
+#   - local_offline_data/**
+#   -! private_keys/**
+# ==============================================================================
+

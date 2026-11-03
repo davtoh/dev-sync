@@ -56,6 +56,14 @@
   - Add `- .git/**` to `rclone-ignore.txt` to eliminate loose git object rate-limiting and eradicate `file not in Local file system at //` errors.
   - Add comprehensive unit tests in `tests/test_summary.py` and `tests/test_engine.py` (28/28 tests passing).
 
+- [x] **Milestone 8: Hierarchical Exclusions, Universal Copy Ignores & Cloud-Safe Semantic Policies (Tiers 1–3)**
+  - Diagnose inclusion of OS duplicate folders (`products/rrtools - copia/`, `products/rrtools - copia (2)/`) consuming over 600 MiB during dry-run push.
+  - Add universal OS copy wildcard patterns to `rclone-ignore.txt` (`- * - copia*/**`, `- * - copia*`, `- * - Copy*/**`, `- * - Copy*`, `- * copy*/**`, `- * copy*`).
+  - Implement **Tier 1 (CLI)**: Add repeatable `--exclude <pattern>` flag across `cli.py` and `engine.py`, injected safely ahead of `--filter-from`.
+  - Implement **Tier 2 (Target Configuration)**: Add auto-discovery for target-level `.syncignore` / `dev-sync-ignore.txt`, and per-target `sync-targets.conf` options (`|exclude=...;...`, `|filter=...`).
+  - Implement **Tier 3 (Semantic Protection)**: Introduce `FilterRule` with intent tagging (`# @local_only`, `-! pattern`), guaranteeing that local-only archives/datasets are excluded from sync without ever being deleted from cloud storage during `cleanup`.
+  - Added unit tests for copy globbing, CLI `--exclude` propagation, `.syncignore` discovery, and `@local_only` cleanup protection (35/35 tests passing).
+
 ---
 
 ## Architectural Decision Records (ADRs)
@@ -88,3 +96,12 @@
   3. Aggregate events in `dev_sync/summary.py` into a high-density, readable terminal box table ("Execution Summary") grouping files by root folder with overwrite and deletion risk alerts.
   4. Automatically preserve detailed JSONL event logs under `.logs/` for offline inspection or scripted post-processing.
 - **Impact**: Terminal view is uncluttered; users instantly see which project root folders are affected; overwrite and deletion risks are highlighted before execution; and `.git` loose object errors are permanently eliminated.
+
+### ADR-005: 3-Tier Hierarchical Exclusions & Semantic `@local_only` Protection
+- **Context**: Inverted filtering previously treated all exclusions (`- pattern`) as transient build bloat to be deleted on remote storage during `cleanup`. This created an architectural hazard: developers who excluded private local archives, offline datasets, or machine-specific artifacts from being synced risked having `cleanup` purge those files from the cloud if an archive copy was previously pushed. Furthermore, users lacked ad-hoc command-line exclusion overrides and target-level `.syncignore` capabilities.
+- **Decision**:
+  1. Add universal OS duplicate wildcards (`* - copia*/**`, `* - Copy*/**`, `* copy*/**`) to ignore numbered copies like `folder - copia (2)`.
+  2. Implement CLI repeatable `--exclude <pattern>` arguments injected ahead of `--filter-from`.
+  3. Implement automatic discovery of target-level `.syncignore` / `dev-sync-ignore.txt` and per-target `sync-targets.conf` options (`|exclude=...;...`, `|filter=...`).
+  4. Implement semantic intent tagging: `# @local_only` or `-! pattern`. Rules with this tag are excluded from sync, but compiled as protected (`- pattern`) in the cleanup filter, and omitted from directory purge scans.
+- **Impact**: Completely eliminates accidental remote deletion of offline data; enables granular project-level ignores without polluting global rules; and empowers users to exclude ad-hoc paths directly from the CLI.

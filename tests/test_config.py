@@ -7,6 +7,7 @@ from pathlib import Path
 
 from dev_sync.config import (
     create_target,
+    find_target_ignore_file,
     get_default_local_base,
     load_targets,
     resolve_local_path,
@@ -90,6 +91,33 @@ class TestConfigResolver(unittest.TestCase):
             targets = load_targets(conf_file, repo_root=base / "dev-sync")
             self.assertTrue(conf_file.exists())
             self.assertIn("demo", targets)
+
+    def test_load_targets_with_options_and_excludes(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            conf_file = base / "sync-targets.conf"
+            conf_file.write_text(
+                """
+                advanced = $LOCAL_BASE/adv | gdrive:adv | exclude=*.tmp;test/** | filter=custom_rules.txt
+                """,
+                encoding="utf-8",
+            )
+            targets = load_targets(conf_file, repo_root=base / "dev-sync")
+            self.assertIn("advanced", targets)
+            t = targets["advanced"]
+            self.assertEqual(t.excludes, ("*.tmp", "test/**"))
+            self.assertIsNotNone(t.custom_filter)
+            self.assertTrue(str(t.custom_filter).endswith("custom_rules.txt"))
+
+    def test_find_target_ignore_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            self.assertIsNone(find_target_ignore_file(base))
+
+            syncignore = base / ".syncignore"
+            syncignore.write_text("- local_build/**\n", encoding="utf-8")
+            found = find_target_ignore_file(base)
+            self.assertEqual(found, syncignore)
 
 
 if __name__ == "__main__":
