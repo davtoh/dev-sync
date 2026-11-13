@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import shlex
 import sys
 from pathlib import Path
 from typing import List, Optional
 
 from dev_sync.config import SyncTarget, create_target, get_default_local_base, load_targets
 from dev_sync.engine import SyncEngine
+from dev_sync.errors import RcloneExecutionError
 from dev_sync.filter import compile_cleanup_filter, parse_filter_rules
 
 
@@ -226,6 +228,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                     show_summary=show_sum,
                     extra_excludes=args.exclude,
                 )
+        except RcloneExecutionError as e:
+            raw_args = argv if argv is not None else sys.argv[1:]
+            retry_cmd = shlex.join(["python", "-m", "dev_sync", *raw_args]) if raw_args else None
+            print(f"\n[ERROR] Action '{args.action}' failed for target '{t.name}': {e.format_message(retry_cmd=retry_cmd)}", file=sys.stderr)
+            return 1
         except Exception as e:
             print(f"\n[ERROR] Action '{args.action}' failed for target '{t.name}': {e}", file=sys.stderr)
             return 1

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from dev_sync.config import SyncTarget
+from dev_sync.errors import build_rclone_error
 from dev_sync.filter import extract_bloat_roots, parse_filter_rules, resolve_target_filters
 from dev_sync.report import format_diagnostic_report, parse_lsd_duplicates
 from dev_sync.summary import ExecutionSummary, build_summary, format_terminal_summary
@@ -82,12 +83,18 @@ class SyncEngine:
         if stream:
             res = subprocess.run(cmd, shell=False, text=True)
             if res.returncode != 0 and not (allow_diff_exit and res.returncode == 1):
-                raise subprocess.CalledProcessError(res.returncode, cmd)
+                raise build_rclone_error(res.returncode, cmd, log_file=log_file)
             return res
         else:
             res = subprocess.run(cmd, shell=False, text=True, capture_output=True)
             if res.returncode != 0 and not (allow_diff_exit and res.returncode == 1):
-                raise subprocess.CalledProcessError(res.returncode, cmd, output=res.stdout, stderr=res.stderr)
+                raise build_rclone_error(
+                    res.returncode,
+                    cmd,
+                    log_file=log_file,
+                    output=res.stdout,
+                    stderr=res.stderr,
+                )
             return res
 
     @contextlib.contextmanager
