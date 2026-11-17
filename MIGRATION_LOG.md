@@ -64,6 +64,11 @@
   - Implement **Tier 3 (Semantic Protection)**: Introduce `FilterRule` with intent tagging (`# @local_only`, `-! pattern`), guaranteeing that local-only archives/datasets are excluded from sync without ever being deleted from cloud storage during `cleanup`.
   - Added unit tests for copy globbing, CLI `--exclude` propagation, `.syncignore` discovery, and `@local_only` cleanup protection (35/35 tests passing).
 
+- [x] **Milestone 9: Cross-Platform Prerequisites & Rclone Installation Hardening**
+  - Verify rclone availability on macOS and Linux environments.
+  - Document installation paths across macOS (Homebrew vs. direct precompiled binary/script to avoid source builds on legacy Intel x86_64 architectures), Linux (universal installer script vs. native package managers), Windows, and Android/Termux.
+  - Full automated verification with live rclone test suite passing (38/38 tests).
+
 ---
 
 ## Architectural Decision Records (ADRs)

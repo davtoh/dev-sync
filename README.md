@@ -37,7 +37,63 @@ dev-sync/
 
 ---
 
-## 2. Pre-Run Verification One-Liners
+## 2. Prerequisites & Verification
+
+### 2.1 Installing Rclone & Python
+
+`dev-sync` requires Python 3.10+ and `rclone` available in your system `PATH`.
+
+#### macOS
+- **Direct Installer (Recommended & Fastest)**:
+  ```bash
+  sudo -v ; curl https://rclone.org/install.sh | sudo bash
+  ```
+  *Or standalone binary without root (`~/.local/bin`)*:
+  ```bash
+  # For Apple Silicon (M1/M2/M3/M4):
+  curl -sSLO https://downloads.rclone.org/rclone-current-osx-arm64.zip && unzip -qo rclone-current-osx-arm64.zip && mkdir -p ~/.local/bin && cp rclone-*-osx-arm64/rclone ~/.local/bin/
+
+  # For Intel Macs (x86_64):
+  curl -sSLO https://downloads.rclone.org/rclone-current-osx-amd64.zip && unzip -qo rclone-current-osx-amd64.zip && mkdir -p ~/.local/bin && cp rclone-*-osx-amd64/rclone ~/.local/bin/
+  ```
+- **Homebrew**:
+  ```bash
+  brew install rclone
+  ```
+  > [!TIP]
+  > On Intel Macs (x86_64), Homebrew may prompt to build `go` and `rclone` from source due to deprecated bottles. Using the direct curl script or precompiled zip installs in seconds without compiling.
+
+#### Linux
+- **Universal Installer (Recommended)**:
+  ```bash
+  sudo -v ; curl https://rclone.org/install.sh | sudo bash
+  ```
+- **Package Managers**:
+  - Debian / Ubuntu / Mint: `sudo apt update && sudo apt install rclone`
+  - Fedora / RHEL: `sudo dnf install rclone`
+  - Arch Linux: `sudo pacman -S rclone`
+
+#### Windows
+- **Winget (Official)**:
+  ```powershell
+  winget install Rclone.Rclone
+  ```
+- **Chocolatey / Scoop**:
+  ```powershell
+  choco install rclone
+  # or
+  scoop install rclone
+  ```
+
+#### Android / Termux
+- See [Section 5](#5-mobile--android-termux-setup) for the full Termux setup:
+  ```bash
+  pkg update && pkg install python rclone git
+  ```
+
+---
+
+### 2.2 Pre-Run Verification One-Liners
 
 Before executing sync or cleanup actions, run these quick diagnostic commands to verify environment readiness:
 
