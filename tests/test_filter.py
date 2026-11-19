@@ -248,6 +248,34 @@ class TestFilterCompiler(unittest.TestCase):
             self.assertEqual(res.returncode, 0, f"rclone delete failed: {res.stderr}")
             self._assert_mock_cleanup_results(mock_tree)
 
+    def test_builtin_trash_and_local_prefs_protection(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            global_filter = base / "rclone-ignore.txt"
+            global_filter.write_text("- node_modules/**\n", encoding="utf-8")
+            local_project = base / "proj"
+            local_project.mkdir()
+            target = SyncTarget(
+                name="proj",
+                raw_local=str(local_project),
+                local_path=local_project,
+                remote_path="gdrive:proj",
+                excludes=("extra_tmp/**",),
+            )
+            sync_filter, cleanup_filter, is_temp = resolve_target_filters(global_filter, target)
+            try:
+                self.assertTrue(is_temp)
+                sync_text = sync_filter.read_text(encoding="utf-8")
+                clean_text = cleanup_filter.read_text(encoding="utf-8")
+                for pat in (".dev-sync-trash/**", ".dev-sync/trash/**", ".dev-sync/local-prefs.json"):
+                    self.assertIn(f"- {pat}", sync_text)
+                    self.assertIn(f"- {pat}", clean_text)
+                    self.assertNotIn(f"+ {pat}", clean_text)
+            finally:
+                for p in (sync_filter if is_temp else None, cleanup_filter):
+                    if p and p.exists():
+                        p.unlink()
+
 
 if __name__ == "__main__":
     unittest.main()

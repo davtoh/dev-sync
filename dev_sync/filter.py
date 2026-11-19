@@ -115,6 +115,25 @@ _CLEANUP_HEADER = [
     "# ==============================================================================",
 ]
 
+BUILTIN_LOCAL_ONLY_PATTERNS: Tuple[str, ...] = (
+    ".dev-sync-trash/**",
+    ".dev-sync/trash/**",
+    ".dev-sync/local-prefs.json",
+)
+
+
+def ensure_builtin_local_only_rules(rules: List[FilterRule]) -> Tuple[List[FilterRule], bool]:
+    """Ensure built-in trash and local-prefs guards are present as local-only rules."""
+    existing = {(r[0], r[1]) for r in rules}
+    updated = list(rules)
+    added = False
+    for pattern in BUILTIN_LOCAL_ONLY_PATTERNS:
+        if ("-", pattern) not in existing:
+            updated.append(FilterRule(action="-", pattern=pattern, is_local_only=True))
+            existing.add(("-", pattern))
+            added = True
+    return updated, added
+
 
 def compile_cleanup_filter(rules: List[Any]) -> str:
     """Compile an inverted filter specifically for safe remote cleanup."""
@@ -221,6 +240,8 @@ def resolve_target_filters(
                 rules.append(FilterRule(action="-", pattern=clean, is_local_only=False))
         has_target_custom = True
 
+    rules, _ = ensure_builtin_local_only_rules(rules)
+
     cleanup_path = _write_temp_filter(f"_{target.name}_cleanup.txt", compile_cleanup_filter(rules))
     if not has_target_custom:
         return global_filter_path, cleanup_path, False
@@ -232,7 +253,7 @@ def resolve_target_filters(
 def generate_cleanup_filter_file(source_file: Path, target_file: Path) -> Path:
     """Read source ignore file and write the compiled cleanup filter to target_file."""
     content = source_file.read_text(encoding="utf-8")
-    rules = parse_filter_rules(content)
+    rules, _ = ensure_builtin_local_only_rules(parse_filter_rules(content))
     cleanup_content = compile_cleanup_filter(rules)
     target_file.parent.mkdir(parents=True, exist_ok=True)
     target_file.write_text(cleanup_content, encoding="utf-8")

@@ -104,16 +104,16 @@ python -m compileall dev_sync tests
 
 ---
 
-### Milestone 2: Git Guard & Sharded Provenance Ledger Engine *(Deferred to Next Turn)*
+### Milestone 2: Git Guard & Sharded Provenance Ledger Engine
 Implement Git working-tree/branch classification, the sharded cross-machine provenance ledger (`.dev-sync/`), local per-machine opt-out preferences (`local-prefs.json`), and built-in filter protection for trash and local preference files.
 
-- [ ] **dev_sync/git_guard.py**: Implement Git repository discovery and `git status --porcelain=v2 --ignored` + `git rev-parse` inspection to classify files (`tracked_clean`, `tracked_dirty`, `untracked_companion`, `git_ignored`, `non_git`) and detect branch/tracked conflicts without modifying `.git/`.
-- [ ] **dev_sync/ledger.py**: Implement conflict-free sharded machine snapshot persistence (`.dev-sync/machines/<machine_id>.json`), merged `.dev-sync/ledger.json` compilation, and `.dev-sync/local-prefs.json` management (`ignore-local`, `unignore-local`, machine identity resolution).
-- [ ] **dev_sync/filter.py**: Automatically inject `# @local_only` protection rules for `.dev-sync-trash/**`, `.dev-sync/trash/**`, and `.dev-sync/local-prefs.json` so trash archives and local preferences are never deleted by `cleanup` or synced across machines.
-- [ ] **rclone-ignore.txt**: Document and include default `# @local_only` guards for `.dev-sync-trash/**`, `.dev-sync/trash/**`, and `.dev-sync/local-prefs.json`.
-- [ ] **tests/test_git_guard.py**: Add unit tests covering sub-repo detection, tracked vs. untracked companion classification, dirty working-tree warnings, and non-Git fallback using isolated `tempfile.TemporaryDirectory()` fixtures.
-- [ ] **tests/test_ledger.py**: Add unit tests verifying sharded machine snapshot merging, origin attribution across multiple machines, and local preference opt-out filtering.
-- [ ] **CHANGELOG.md**: Record milestone completion via `python "<config_dir>/skills/system-diagnostics/scripts/diagnose.py" changelog add`
+- [x] **dev_sync/git_guard.py**: Implement Git repository discovery and `git status --porcelain=v2 --ignored` + `git rev-parse` inspection to classify files (`tracked_clean`, `tracked_dirty`, `untracked_companion`, `git_ignored`, `non_git`) and detect branch/tracked conflicts without modifying `.git/`.
+- [x] **dev_sync/ledger.py**: Implement conflict-free sharded machine snapshot persistence (`.dev-sync/machines/<machine_id>.json`), merged `.dev-sync/ledger.json` compilation, and `.dev-sync/local-prefs.json` management (`ignore-local`, `unignore-local`, machine identity resolution).
+- [x] **dev_sync/filter.py**: Automatically inject `# @local_only` protection rules for `.dev-sync-trash/**`, `.dev-sync/trash/**`, and `.dev-sync/local-prefs.json` so trash archives and local preferences are never deleted by `cleanup` or synced across machines.
+- [x] **rclone-ignore.txt**: Document and include default `# @local_only` guards for `.dev-sync-trash/**`, `.dev-sync/trash/**`, and `.dev-sync/local-prefs.json`.
+- [x] **tests/test_git_guard.py**: Add unit tests covering sub-repo detection, tracked vs. untracked companion classification, dirty working-tree warnings, and non-Git fallback using isolated `tempfile.TemporaryDirectory()` fixtures.
+- [x] **tests/test_ledger.py**: Add unit tests verifying sharded machine snapshot merging, origin attribution across multiple machines, and local preference opt-out filtering.
+- [x] **CHANGELOG.md**: Record milestone completion via `python "<config_dir>/skills/system-diagnostics/scripts/diagnose.py" changelog add`
 
 #### Verification Commands (Milestone 2)
 ```bash

@@ -1,5 +1,18 @@
 # Changelog
 
+## [2026-11-19] feat: Git Guard & Sharded Provenance Ledger Engine
+- **Type**: feat
+- **Summary**: Added git_guard.py for sub-repo/working-tree classification, ledger.py for sharded cross-machine provenance & local opt-out prefs, and built-in @local_only guards for trash/prefs.
+- **Files** (7):
+  - `dev_sync/filter.py`
+  - `rclone-ignore.txt`
+  - `tests/test_filter.py`
+  - `dev_sync/git_guard.py`
+  - `dev_sync/ledger.py`
+  - `tests/test_git_guard.py`
+  - `tests/test_ledger.py`
+- **Verification**: python -m unittest discover -s tests -v
+
 ## [2026-11-19] feat: Milestone 1: Modularity Decomposition, Summary Fixes & Domain Contracts
 - **Type**: feat
 - **Summary**: Added headless JSON models in dev_sync/models.py, fixed directory modtime and category rollup in summary.py, and decomposed engine/cli/config/filter/report/tests below modularity budgets.
