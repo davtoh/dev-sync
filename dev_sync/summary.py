@@ -7,20 +7,14 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 
 # Known common monorepo category prefixes where project roots are 2 levels deep
 CONTAINER_ROOT_PREFIXES = {
-    "products",
-    "packages",
-    "apps",
-    "services",
-    "projects",
-    "modules",
-    "core",
-    "tools",
-    "libraries",
+    "products", "packages", "apps", "services", "projects", "modules",
+    "core", "tools", "libraries", "core_libraries",
+    "research_and_experiments", "rpa_automation", "web_and_services",
 }
 
 
@@ -134,69 +128,126 @@ def _classify_event(level: str, msg: str, skipped: Optional[str] = None) -> str:
     return "copy"
 
 
+_TEXT_LOG_RE = re.compile(
+    r"^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} (NOTICE|ERROR|WARNING|INFO)\s*:\s*(?:([^:]+):\s*)?(.*)$"
+)
+
+
+def _is_ignored_object(obj: str) -> bool:
+    """Return True for rclone Fs-level summary objects."""
+    return "file system at" in obj or "root '" in obj
+
+
+def _parse_json_log_line(line: str) -> Optional[PathEvent]:
+    """Parse a single JSONL rclone log line into a PathEvent if applicable."""
+    try:
+        data = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    obj = data.get("object")
+    if not obj or not isinstance(obj, str) or _is_ignored_object(obj):
+        return None
+
+    level = str(data.get("level", "notice")).lower()
+    msg = str(data.get("msg", ""))
+    raw_size = str(data.get("size", "0"))
+    size = int(raw_size) if raw_size.isdigit() else 0
+    action = _classify_event(level, msg, data.get("skipped"))
+    return PathEvent(
+        path=obj,
+        root_folder=extract_root_folder(obj),
+        action=action,
+        size=size,
+        level=level,
+        message=msg,
+    )
+
+
+def _parse_text_log_line(line: str) -> Optional[PathEvent]:
+    """Parse a single plain-text rclone log line into a PathEvent if applicable."""
+    match = _TEXT_LOG_RE.match(line)
+    if not match:
+        return None
+    level, obj, msg = match.group(1).lower(), match.group(2), match.group(3)
+    if not obj or _is_ignored_object(obj):
+        return None
+    clean_obj = obj.strip()
+    return PathEvent(
+        path=clean_obj,
+        root_folder=extract_root_folder(clean_obj),
+        action=_classify_event(level, msg),
+        size=0,
+        level=level,
+        message=msg,
+    )
+
+
 def parse_log_events(log_path: Path) -> List[PathEvent]:
     """Parse structured JSON lines or fallback text log output into PathEvents."""
     if not log_path.exists():
         return []
 
     events: List[PathEvent] = []
-    text_regex = re.compile(r"^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} (NOTICE|ERROR|WARNING|INFO)\s*:\s*(?:([^:]+):\s*)?(.*)$")
-
     for raw_line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw_line.strip()
         if not line:
             continue
-
-        if line.startswith("{") and line.endswith("}"):
-            try:
-                data = json.loads(line)
-                obj = data.get("object")
-                if not obj or not isinstance(obj, str):
-                    continue
-                # Skip rclone Fs-level summary lines like 'Local file system at ...'
-                if "file system at" in obj or "root '" in obj:
-                    continue
-
-                level = str(data.get("level", "notice")).lower()
-                msg = str(data.get("msg", ""))
-                skipped = data.get("skipped")
-                size = int(data.get("size", 0)) if str(data.get("size", "0")).isdigit() else 0
-                action = _classify_event(level, msg, skipped)
-
-                events.append(
-                    PathEvent(
-                        path=obj,
-                        root_folder=extract_root_folder(obj),
-                        action=action,
-                        size=size,
-                        level=level,
-                        message=msg,
-                    )
-                )
-                continue
-            except json.JSONDecodeError:
-                pass
-
-        # Text line fallback
-        match = text_regex.match(line)
-        if match:
-            level = match.group(1).lower()
-            obj = match.group(2)
-            msg = match.group(3)
-            if obj and not ("file system at" in obj or "root '" in obj):
-                action = _classify_event(level, msg)
-                events.append(
-                    PathEvent(
-                        path=obj.strip(),
-                        root_folder=extract_root_folder(obj.strip()),
-                        action=action,
-                        size=0,
-                        level=level,
-                        message=msg,
-                    )
-                )
-
+        ev = _parse_json_log_line(line) if line.startswith("{") and line.endswith("}") else None
+        if ev is None:
+            ev = _parse_text_log_line(line)
+        if ev is not None:
+            events.append(ev)
     return events
+
+
+def _is_directory_modtime_event(ev: PathEvent) -> bool:
+    """Return True when an event is a directory-level SetModTime notice."""
+    return ev.action == "modtime" and "directory modification time" in ev.message.lower()
+
+
+def _record_event(summary: ExecutionSummary, ev: PathEvent) -> None:
+    """Accumulate a single file event into summary and root_stats."""
+    if _is_directory_modtime_event(ev):
+        return
+
+    summary.total_files += 1
+    summary.total_bytes += ev.size
+    rf = summary.root_stats.setdefault(ev.root_folder, RootFolderStats(root_folder=ev.root_folder))
+    rf.total_files += 1
+    rf.total_bytes += ev.size
+
+    if ev.action == "copy":
+        summary.copied_count += 1
+        rf.copied_count += 1
+    elif ev.action == "overwrite":
+        summary.overwritten_count += 1
+        rf.overwritten_count += 1
+    elif ev.action == "delete":
+        summary.deleted_count += 1
+        rf.deleted_count += 1
+    elif ev.action in ("difference", "missing_local", "missing_remote"):
+        summary.diff_count += 1
+        rf.diff_count += 1
+    elif ev.action == "error":
+        summary.error_count += 1
+        rf.error_count += 1
+
+
+def _append_risk_warnings(summary: ExecutionSummary, action: str, dry_run: bool) -> None:
+    """Populate safety and risk warnings on an ExecutionSummary."""
+    if summary.overwritten_count > 0:
+        summary.warnings.append(
+            f"ADVISORY: {summary.overwritten_count} file(s) will OVERWRITE existing files on destination!"
+        )
+    if summary.deleted_count > 0:
+        label = "targeted for DELETION" if dry_run else "PERMANENTLY DELETED"
+        summary.warnings.append(f"RISK: {summary.deleted_count} file(s) {label} from storage!")
+    if summary.error_count > 0:
+        summary.warnings.append(f"ATTENTION: {summary.error_count} error(s) occurred during execution.")
+    if summary.diff_count > 0 and action == "check":
+        summary.warnings.append(
+            f"CHECK: {summary.diff_count} synchronization difference(s) detected between local and remote."
+        )
 
 
 def build_summary(
@@ -216,101 +267,37 @@ def build_summary(
         dry_run=dry_run,
         log_file_path=log_path,
     )
-
     for ev in events:
-        summary.total_files += 1
-        summary.total_bytes += ev.size
-
-        if ev.root_folder not in summary.root_stats:
-            summary.root_stats[ev.root_folder] = RootFolderStats(root_folder=ev.root_folder)
-
-        rf = summary.root_stats[ev.root_folder]
-        rf.total_files += 1
-        rf.total_bytes += ev.size
-
-        if ev.action == "copy":
-            summary.copied_count += 1
-            rf.copied_count += 1
-        elif ev.action == "overwrite":
-            summary.overwritten_count += 1
-            rf.overwritten_count += 1
-        elif ev.action == "delete":
-            summary.deleted_count += 1
-            rf.deleted_count += 1
-        elif ev.action in ("difference", "missing_local", "missing_remote"):
-            summary.diff_count += 1
-            rf.diff_count += 1
-        elif ev.action == "error":
-            summary.error_count += 1
-            rf.error_count += 1
-
-    # Safety & Risk Assessment
-    if summary.overwritten_count > 0:
-        summary.warnings.append(
-            f"ADVISORY: {summary.overwritten_count} file(s) will OVERWRITE existing files on destination!"
-        )
-
-    if summary.deleted_count > 0:
-        label = "targeted for DELETION" if dry_run else "PERMANENTLY DELETED"
-        summary.warnings.append(
-            f"RISK: {summary.deleted_count} file(s) {label} from storage!"
-        )
-
-    if summary.error_count > 0:
-        summary.warnings.append(
-            f"ATTENTION: {summary.error_count} error(s) occurred during execution."
-        )
-
-    if summary.diff_count > 0 and action == "check":
-        summary.warnings.append(
-            f"CHECK: {summary.diff_count} synchronization difference(s) detected between local and remote."
-        )
-
+        _record_event(summary, ev)
+    _append_risk_warnings(summary, action, dry_run)
     return summary
 
 
-def format_terminal_summary(summary: ExecutionSummary) -> str:
-    """Format the ExecutionSummary into a compact, high-density terminal box table."""
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    mode_tag = "[DRY-RUN PREVIEW] (No filesystem changes made)" if summary.dry_run else "[LIVE APPLIED] (Changes committed)"
+def _format_summary_rows(summary: ExecutionSummary) -> List[str]:
+    """Render the root directory breakdown rows and totals."""
+    if not summary.root_stats:
+        return ["No files or paths were affected. Target is clean and in sync."]
 
-    lines = [
-        "=" * 86,
-        "dev-sync Execution Summary",
-        "=" * 86,
-        f"Target       : {summary.target_name}",
-        f"Action       : {summary.action.upper()}",
-        f"Execution    : {mode_tag}",
-        f"Timestamp    : {timestamp}",
-    ]
-
-    if summary.log_file_path:
-        lines.append(f"Log File     : {summary.log_file_path.resolve()}")
-
-    lines.extend([
-        "-" * 86,
-        f"Affected Root Directories ({len(summary.root_stats)} locations detected):",
-        f"{'Root Directory':<32} {'Files':>7} {'Transferred':>12} {'Overwritten':>12} {'Deleted':>9} {'Errors':>8} {'Size':>10}",
-        "-" * 86,
-    ])
-
-    if summary.root_stats:
-        for rf_name in sorted(summary.root_stats.keys()):
-            st = summary.root_stats[rf_name]
-            lines.append(
-                f"{rf_name:<32} {st.total_files:>7} {st.copied_count:>12} {st.overwritten_count:>12} {st.deleted_count:>9} {st.error_count:>8} {format_bytes(st.total_bytes):>10}"
-            )
-        lines.append("-" * 86)
+    lines: List[str] = []
+    for rf_name in sorted(summary.root_stats.keys()):
+        st = summary.root_stats[rf_name]
         lines.append(
-            f"{'TOTAL':<32} {summary.total_files:>7} {summary.copied_count:>12} {summary.overwritten_count:>12} {summary.deleted_count:>9} {summary.error_count:>8} {format_bytes(summary.total_bytes):>10}"
+            f"{rf_name:<32} {st.total_files:>7} {st.copied_count:>12} {st.overwritten_count:>12} "
+            f"{st.deleted_count:>9} {st.error_count:>8} {format_bytes(st.total_bytes):>10}"
         )
-    else:
-        lines.append("No files or paths were affected. Target is clean and in sync.")
+    lines.append("-" * 86)
+    lines.append(
+        f"{'TOTAL':<32} {summary.total_files:>7} {summary.copied_count:>12} {summary.overwritten_count:>12} "
+        f"{summary.deleted_count:>9} {summary.error_count:>8} {format_bytes(summary.total_bytes):>10}"
+    )
+    return lines
 
-    lines.extend(["-" * 86, "Safety & Risk Assessment:"])
+
+def _format_risk_section(summary: ExecutionSummary) -> List[str]:
+    """Render the safety and risk assessment section."""
+    lines = ["-" * 86, "Safety & Risk Assessment:"]
     if summary.warnings:
-        for w in summary.warnings:
-            lines.append(f"  [!] {w}")
+        lines.extend(f"  [!] {w}" for w in summary.warnings)
     elif summary.dry_run and summary.action in ("push", "pull") and summary.copied_count > 0:
         lines.append(
             "  [NOTE] rclone --dry-run does not distinguish new copies from overwrites "
@@ -321,7 +308,36 @@ def format_terminal_summary(summary: ExecutionSummary) -> str:
 
     if summary.dry_run:
         lines.append("  [TIP] Review affected paths above. Run without --dry-run to execute live changes.")
+    return lines
 
+
+def format_terminal_summary(summary: ExecutionSummary) -> str:
+    """Format the ExecutionSummary into a compact, high-density terminal box table."""
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    mode_tag = (
+        "[DRY-RUN PREVIEW] (No filesystem changes made)"
+        if summary.dry_run
+        else "[LIVE APPLIED] (Changes committed)"
+    )
+    lines = [
+        "=" * 86,
+        "dev-sync Execution Summary",
+        "=" * 86,
+        f"Target       : {summary.target_name}",
+        f"Action       : {summary.action.upper()}",
+        f"Execution    : {mode_tag}",
+        f"Timestamp    : {timestamp}",
+    ]
+    if summary.log_file_path:
+        lines.append(f"Log File     : {summary.log_file_path.resolve()}")
+    lines.extend([
+        "-" * 86,
+        f"Affected Root Directories ({len(summary.root_stats)} locations detected):",
+        f"{'Root Directory':<32} {'Files':>7} {'Transferred':>12} {'Overwritten':>12} {'Deleted':>9} {'Errors':>8} {'Size':>10}",
+        "-" * 86,
+    ])
+    lines.extend(_format_summary_rows(summary))
+    lines.extend(_format_risk_section(summary))
     lines.extend(["=" * 86, ""])
     return "\n".join(lines)
 
