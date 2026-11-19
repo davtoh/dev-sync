@@ -59,16 +59,32 @@ def render_diff_tree(report: DiffReport) -> str:
 
 
 def _expand_file_range(token: str, folders: List[FolderDiffNode]) -> List[FileDiffItem]:
-    """Expand `F.I` or `F.I1-F.I2` or `F.I1-I2` into matching FileDiffItems."""
+    """Expand `F.I`, `F.I1-I2`, or `F1.I1-F2.I2` into matching FileDiffItems."""
     if "-" in token:
         left, right = token.split("-", 1)
-        f_idx_str, start_str = left.split(".", 1)
-        end_str = right.split(".", 1)[1] if "." in right else right
-        f_idx, start_i, end_i = int(f_idx_str), int(start_str), int(end_str)
-        if 1 <= f_idx <= len(folders):
+        f_start_str, i_start_str = left.split(".", 1)
+        f_start, i_start = int(f_start_str), int(i_start_str)
+        if "." in right:
+            f_end_str, i_end_str = right.split(".", 1)
+            f_end, i_end = int(f_end_str), int(i_end_str)
+        else:
+            f_end, i_end = f_start, int(right)
+
+        if f_start > f_end or f_end < 1 or f_start > len(folders):
+            return []
+        if f_start == f_end:
+            if 1 <= f_start <= len(folders):
+                items = folders[f_start - 1].items
+                return [items[k - 1] for k in range(max(1, i_start), min(len(items), i_end) + 1)]
+            return []
+
+        selected: List[FileDiffItem] = []
+        for f_idx in range(max(1, f_start), min(len(folders), f_end) + 1):
             items = folders[f_idx - 1].items
-            return [items[k - 1] for k in range(max(1, start_i), min(len(items), end_i) + 1)]
-        return []
+            lo = max(1, i_start) if f_idx == f_start else 1
+            hi = min(len(items), i_end) if f_idx == f_end else len(items)
+            selected.extend(items[k - 1] for k in range(lo, hi + 1))
+        return selected
 
     f_idx_str, i_idx_str = token.split(".", 1)
     f_idx, i_idx = int(f_idx_str), int(i_idx_str)

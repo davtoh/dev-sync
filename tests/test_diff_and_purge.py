@@ -197,3 +197,67 @@ class TestDiffAndPurge(unittest.TestCase):
         self.assertIn("--backup-dir", call_args)
         self.assertIn("heavy/**", call_args)
         self.assertTrue((self.local / ".dev-sync" / "ledger.json").exists())
+
+    @patch("dev_sync.engine.SyncEngine._verify_rclone")
+    def test_restore_local_skips_existing_unless_overwrite(self, mock_verify) -> None:
+        trash_file = self.local / ".dev-sync" / "trash" / "2026-11-19_120000" / "old" / "a.txt"
+        trash_file.parent.mkdir(parents=True)
+        trash_file.write_text("trashed-v1", encoding="utf-8")
+
+        live_file = self.local / "old" / "a.txt"
+        live_file.parent.mkdir(parents=True)
+        live_file.write_text("live-v2", encoding="utf-8")
+
+        executor = PurgeExecutor(self.engine)
+        skipped_res = executor.restore(self.target, select_pattern="old/*.txt", scope="local")
+        self.assertEqual(skipped_res["local_restored"], 0)
+        self.assertEqual(skipped_res["local_skipped"], 1)
+        self.assertEqual(skipped_res["skipped_paths"], ["old/a.txt"])
+        self.assertEqual(live_file.read_text(encoding="utf-8"), "live-v2")
+        self.assertTrue(trash_file.exists())
+
+        overwrite_res = executor.restore(self.target, select_pattern="old/*.txt", scope="local", overwrite=True)
+        self.assertEqual(overwrite_res["local_restored"], 1)
+        self.assertNotIn("local_skipped", overwrite_res)
+        self.assertEqual(live_file.read_text(encoding="utf-8"), "trashed-v1")
+        self.assertFalse(trash_file.exists())
+
+    def test_parse_selection_cross_folder_and_reversed_ranges(self) -> None:
+        report = DiffReport(
+            target_name="proj",
+            local_path=str(self.local),
+            remote_path="gdrive:proj",
+            generated_at="2026-11-19T12:00:00Z",
+            total_files=5,
+            total_bytes=500,
+            folders=[
+                FolderDiffNode("docs", 1, 100, 0, [FileDiffItem("docs/a.md", "docs", "local_only", local_size=100)]),
+                FolderDiffNode(
+                    "rr",
+                    2,
+                    200,
+                    0,
+                    [
+                        FileDiffItem("rr/x.pdf", "rr", "remote_only", remote_size=100),
+                        FileDiffItem("rr/y.pdf", "rr", "remote_only", remote_size=100),
+                    ],
+                ),
+                FolderDiffNode(
+                    "src",
+                    2,
+                    200,
+                    0,
+                    [
+                        FileDiffItem("src/m.py", "src", "local_only", local_size=100),
+                        FileDiffItem("src/n.py", "src", "local_only", local_size=100),
+                    ],
+                ),
+            ],
+        )
+        self.assertEqual([i.rel_path for i in parse_selection("1.1-2.1", report)], ["docs/a.md", "rr/x.pdf"])
+        self.assertEqual(
+            [i.rel_path for i in parse_selection("1.1-3.1", report)],
+            ["docs/a.md", "rr/x.pdf", "rr/y.pdf", "src/m.py"],
+        )
+        self.assertEqual(parse_selection("2.2-1.1", report), [])
+        self.assertEqual([i.rel_path for i in parse_selection("2.1-2", report)], ["rr/x.pdf", "rr/y.pdf"])

@@ -163,7 +163,14 @@ class PurgeExecutor:
             restored += self._run_remote_files_cmd(["move", f"{trash_root}/{ts_part}", target.remote_path], rels, dry_run)
         return restored
 
-    def _restore_local(self, target: SyncTarget, select_pattern: str, dry_run: bool) -> int:
+    def _restore_local(
+        self,
+        target: SyncTarget,
+        select_pattern: str,
+        dry_run: bool,
+        overwrite: bool = False,
+        skipped: Optional[List[str]] = None,
+    ) -> int:
         """Restore matching files from local .dev-sync/trash/<ts>/."""
         trash_root = target.local_path / LOCAL_TRASH_SUBPATH
         if not trash_root.is_dir():
@@ -183,6 +190,10 @@ class PurgeExecutor:
         restored = 0
         for rel_part, (_, src_file) in latest_by_rel.items():
             dst = target.local_path / Path(*rel_part.split("/"))
+            if (dst.exists() or dst.is_symlink()) and not overwrite:
+                if skipped is not None:
+                    skipped.append(rel_part)
+                continue
             if not dry_run:
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(src_file), str(dst))
@@ -190,12 +201,26 @@ class PurgeExecutor:
         return restored
 
     def restore(
-        self, target: SyncTarget, select_pattern: str = "*", scope: str = "both", dry_run: bool = False
-    ) -> Dict[str, int]:
+        self,
+        target: SyncTarget,
+        select_pattern: str = "*",
+        scope: str = "both",
+        dry_run: bool = False,
+        overwrite: bool = False,
+    ) -> Dict[str, Any]:
         """Restore trashed files matching select_pattern."""
         remote_count = self._restore_remote(target, select_pattern, dry_run) if scope in ("remote", "both") else 0
-        local_count = self._restore_local(target, select_pattern, dry_run) if scope in ("local", "both") else 0
-        return {"remote_restored": remote_count, "local_restored": local_count}
+        skipped_local: List[str] = []
+        local_count = (
+            self._restore_local(target, select_pattern, dry_run, overwrite=overwrite, skipped=skipped_local)
+            if scope in ("local", "both")
+            else 0
+        )
+        result: Dict[str, Any] = {"remote_restored": remote_count, "local_restored": local_count}
+        if skipped_local:
+            result["local_skipped"] = len(skipped_local)
+            result["skipped_paths"] = skipped_local
+        return result
 
     def _is_expired_trash(self, folder_name: str, older_than_days: Optional[int], now: datetime.datetime) -> bool:
         if older_than_days is None:

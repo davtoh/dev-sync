@@ -53,6 +53,7 @@ def _add_execution_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--permanent", action="store_true", help="Permanently delete selected items during purge (requires --yes).")
     parser.add_argument("--ignore-local", action="store_true", help="Register selected paths in .dev-sync/local-prefs.json.")
     parser.add_argument("--yes", action="store_true", help="Confirm non-interactive permanent deletion.")
+    parser.add_argument("--overwrite", action="store_true", help="Allow restore to overwrite existing local files.")
     parser.add_argument("--older-than", type=int, default=None, help="Only empty trash folders older than N days.")
 
 
@@ -208,7 +209,18 @@ def _execute_target_action(engine: SyncEngine, target: SyncTarget, args: argpars
     elif args.action == "purge":
         _run_purge_action(engine, target, args)
     elif args.action == "restore":
-        res = PurgeExecutor(engine).restore(target, select_pattern=args.select or "*", scope=args.scope or "both", dry_run=args.dry_run)
+        res = PurgeExecutor(engine).restore(
+            target,
+            select_pattern=args.select or "*",
+            scope=args.scope or "both",
+            dry_run=args.dry_run,
+            overwrite=args.overwrite,
+        )
+        if res.get("local_skipped"):
+            print(
+                f"Warning: Skipped {res['local_skipped']} existing local file(s); re-run with --overwrite to replace: {res['skipped_paths']}",
+                file=sys.stderr,
+            )
         print(f"Restore completed: {res}")
     elif args.action == "empty-trash":
         res = PurgeExecutor(engine).empty_trash(target, older_than_days=args.older_than, scope=args.scope or "both", dry_run=args.dry_run)
