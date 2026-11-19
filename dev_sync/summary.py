@@ -106,23 +106,29 @@ def extract_root_folder(object_path: str) -> str:
 def _classify_event(level: str, msg: str, skipped: Optional[str] = None) -> str:
     """Classify the action category from rclone log attributes."""
     msg_lower = msg.lower()
+    skipped_lower = (skipped or "").lower()
 
     if level == "error":
-        if "file not in" in msg_lower and "/dst" in msg_lower:
-            return "missing_remote"
-        if "file not in" in msg_lower and "/src" in msg_lower:
-            return "missing_local"
+        if "file not in" in msg_lower:
+            if "/dst" in msg_lower:
+                return "missing_remote"
+            if "/src" in msg_lower or "local file system" in msg_lower:
+                return "missing_local"
+            return "difference"
         if "sizes differ" in msg_lower or "hash differ" in msg_lower:
             return "difference"
         return "error"
 
-    if skipped == "delete" or "deleted" in msg_lower:
+    if skipped_lower == "delete" or "deleted" in msg_lower:
         return "delete"
 
     if "replace" in msg_lower or "overwrite" in msg_lower:
         return "overwrite"
 
-    if skipped == "copy" or "copied" in msg_lower:
+    if "modification time" in skipped_lower or "modification time" in msg_lower:
+        return "modtime"
+
+    if skipped_lower == "copy" or "copied" in msg_lower:
         return "copy"
 
     return "copy"
@@ -305,6 +311,11 @@ def format_terminal_summary(summary: ExecutionSummary) -> str:
     if summary.warnings:
         for w in summary.warnings:
             lines.append(f"  [!] {w}")
+    elif summary.dry_run and summary.action in ("push", "pull") and summary.copied_count > 0:
+        lines.append(
+            "  [NOTE] rclone --dry-run does not distinguish new copies from overwrites "
+            "(Overwritten may be > 0 in live run)."
+        )
     else:
         lines.append("  [OK] Zero overwrite or deletion risks detected.")
 

@@ -127,6 +127,33 @@ class TestSummaryEngine(unittest.TestCase):
         self.assertIn("products/rrtools/", rendered)
         self.assertIn("[DRY-RUN PREVIEW]", rendered)
         self.assertIn("TOTAL", rendered)
+        self.assertIn("does not distinguish new copies from overwrites", rendered)
+        self.assertNotIn("Zero overwrite or deletion risks detected", rendered)
+
+    def test_modtime_and_check_missing_local_classification(self):
+        with tempfile.NamedTemporaryFile("w+", suffix=".jsonl", delete=False, encoding="utf-8") as tf:
+            log_path = Path(tf.name)
+            tf.write(
+                '{"time":"2026-11-18T19:50:00","level":"notice","msg":"Skipped update modification time as --dry-run is set (size 679)","skipped":"update modification time","size":679,"object":"products/rrtools/a.py"}\n'
+                '{"time":"2026-11-18T19:50:01","level":"info","msg":"Set directory modification time (using SetModTime)","object":"products/rrtools"}\n'
+                '{"time":"2026-11-18T19:51:37","level":"error","msg":"file not in Local file system at //?/C:/dev/projects","object":"products/excel_enhancer/README.rst"}\n'
+            )
+
+        try:
+            events = parse_log_events(log_path)
+            self.assertEqual(len(events), 3)
+            self.assertEqual(events[0].action, "modtime")
+            self.assertEqual(events[1].action, "modtime")
+            self.assertEqual(events[2].action, "missing_local")
+
+            summary = build_summary("projects", "check", False, events=events)
+            self.assertEqual(summary.copied_count, 0)
+            self.assertEqual(summary.error_count, 0)
+            self.assertEqual(summary.diff_count, 1)
+            self.assertIn("1 synchronization difference(s) detected", " ".join(summary.warnings))
+        finally:
+            if log_path.exists():
+                log_path.unlink()
 
 
 if __name__ == "__main__":
