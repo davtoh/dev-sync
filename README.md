@@ -24,14 +24,27 @@ dev-sync/
 │   ├── __main__.py            # CLI entrypoint ('python -m dev_sync')
 │   ├── cli.py                 # Argument parser & feedback formatter
 │   ├── config.py              # Portable path resolver ($LOCAL_BASE, $HOME)
+│   ├── diff.py                # Hierarchical diff analyzer (rclone + Git + ledger)
 │   ├── engine.py              # Parameterized rclone subprocess runner
+│   ├── errors.py              # Rclone error diagnostics & recovery hints
 │   ├── filter.py              # Inverted cleanup filter compiler
+│   ├── git_guard.py           # Sub-repo Git classification & conflict guard
+│   ├── interactive.py         # Numbered diff tree & selector prompt
+│   ├── ledger.py              # Sharded machine provenance & local-prefs store
+│   ├── models.py              # Pure stdlib JSON-serializable domain contracts
+│   ├── purge.py               # Native --backup-dir trash, purge, restore & empty-trash
 │   ├── report.py              # Remote diagnostics & physical report formatter
-│   └── summary.py             # Event log parser, root folder rollup & risk engine
+│   ├── summary.py             # Event log parser, root folder rollup & risk engine
+│   └── sync_hooks.py          # Pre-flight Git banner, local-prefs & ledger hooks
 └── tests/                     # Automated unit test suite
     ├── test_config.py
+    ├── test_diff_and_purge.py
     ├── test_engine.py
+    ├── test_errors.py
     ├── test_filter.py
+    ├── test_git_guard.py
+    ├── test_ledger.py
+    ├── test_models.py
     └── test_summary.py
 ```
 
@@ -174,6 +187,14 @@ phone_projects=$LOCAL_BASE/phone_projects|gdrive:phone_projects
 | **Pull Remote Changes** | `projects` | Copy remote to local | `.\sync-projects.ps1 pull projects` | `./sync-projects.sh pull projects` | `python -m dev_sync pull projects` |
 | **Push Local Changes** | `projects` | Copy local to remote | `.\sync-projects.ps1 push projects` | `./sync-projects.sh push projects` | `python -m dev_sync push projects` |
 | **Compare Differences** | `projects` | Check hashes/size | `.\sync-projects.ps1 check projects` | `./sync-projects.sh check projects` | `python -m dev_sync check projects` |
+| **Smart Hierarchical Diff** | `projects` | Tree + Git + Ledger | `.\sync-projects.ps1 diff projects` | `./sync-projects.sh diff projects` | `python -m dev_sync diff projects` |
+| **Machine-Readable Diff JSON** | `projects` | `--json` | `.\sync-projects.ps1 diff projects --json` | `./sync-projects.sh diff projects --json` | `python -m dev_sync diff projects --json` |
+| **Interactive Selective Purge** | `projects` | `[T]rash/[P]erm/[I]gnore` | `.\sync-projects.ps1 purge projects` | `./sync-projects.sh purge projects` | `python -m dev_sync purge projects` |
+| **Scripted Trash Purge** | `projects` | `--select ... --trash` | `.\sync-projects.ps1 purge projects --select "old/**" --scope remote --trash` | `./sync-projects.sh purge projects --select "old/**" --scope remote --trash` | `python -m dev_sync purge projects --select "old/**" --scope remote --trash` |
+| **Ignore Heavy Folder Locally** | `projects` | `--ignore-local` | `.\sync-projects.ps1 purge projects --select "heavy/**" --ignore-local` | `./sync-projects.sh purge projects --select "heavy/**" --ignore-local` | `python -m dev_sync purge projects --select "heavy/**" --ignore-local` |
+| **Apply GUI PurgePlan JSON** | `projects` | `--apply-plan <file>` | `.\sync-projects.ps1 purge projects --apply-plan plan.json` | `./sync-projects.sh purge projects --apply-plan plan.json` | `python -m dev_sync purge projects --apply-plan plan.json` |
+| **Restore From Trash** | `projects` | `--select <pat>` | `.\sync-projects.ps1 restore projects --select "docs/*"` | `./sync-projects.sh restore projects --select "docs/*"` | `python -m dev_sync restore projects --select "docs/*"` |
+| **Expire Old Trash** | `projects` | `--older-than <days>` | `.\sync-projects.ps1 empty-trash projects --older-than 30` | `./sync-projects.sh empty-trash projects --older-than 30` | `python -m dev_sync empty-trash projects --older-than 30` |
 | **Ad-Hoc Custom Sync** | `custom` | Direct parameters | `.\sync-projects.ps1 push app $HOME/app gdrive:app -DryRun` | `./sync-projects.sh push app "$HOME/app" "gdrive:app" --dry-run` | `python -m dev_sync push app "$HOME/app" "gdrive:app" --dry-run` |
 
 ---

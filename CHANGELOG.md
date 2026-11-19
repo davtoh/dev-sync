@@ -1,5 +1,19 @@
 # Changelog
 
+## [2026-11-19] feat: Hierarchical Diff, Native Trash, Restore & Dual-Mode Selective Purge
+- **Type**: feat
+- **Summary**: Implemented DiffAnalyzer, PurgeExecutor (trash/permanent/ignore-local/restore/empty-trash), interactive tree selector, --update/--backup-dir smart sync hooks, and CLI wiring.
+- **Files** (8):
+  - `README.md`
+  - `dev_sync/cli.py`
+  - `dev_sync/engine.py`
+  - `dev_sync/diff.py`
+  - `dev_sync/interactive.py`
+  - `dev_sync/purge.py`
+  - `dev_sync/sync_hooks.py`
+  - `tests/test_diff_and_purge.py`
+- **Verification**: python -m unittest discover -s tests -v
+
 ## [2026-11-19] feat: Git Guard & Sharded Provenance Ledger Engine
 - **Type**: feat
 - **Summary**: Added git_guard.py for sub-repo/working-tree classification, ledger.py for sharded cross-machine provenance & local opt-out prefs, and built-in @local_only guards for trash/prefs.

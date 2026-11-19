@@ -126,14 +126,14 @@ python -m unittest discover -s tests -v
 ### Milestone 3: Hierarchical Diff Engine, Native `--backup-dir` Trash & Dual-Mode Selective Purge *(Deferred to Future Turn)*
 Wire the hierarchical diff inspector, native `rclone --backup-dir` garbage/trash management, dual-mode interactive/CLI/JSON selective purge, and the Smart Pre-Flight Guard banner for `pull`/`push`.
 
-- [ ] **dev_sync/diff.py**: Implement `DiffAnalyzer` combining `rclone check --combined -` and `rclone lsjson` with `git_guard` and `ledger` to produce hierarchical `DiffReport` trees (`FolderDiffNode` -> `FileDiffItem`) with newer/older status, Git badges, and machine provenance.
-- [ ] **dev_sync/purge.py**: Implement headless `PurgeExecutor` supporting `--trash` (via `rclone` native `--backup-dir` into `.dev-sync-trash/<timestamp>/` and local `.dev-sync/trash/<timestamp>/`), `--permanent` deletion, `--ignore-local` preference registration, `restore`, and `empty-trash [--older-than <days>]`.
-- [ ] **dev_sync/interactive.py**: Implement the terminal numbered Folder/File Tree renderer and selector parser (`1, 3, 2.1-2.4`, action prompts `[T]rash / [P]ermanent / [I]gnore locally / [S]kip`) decoupled from `PurgeExecutor`.
-- [ ] **dev_sync/engine.py**: Upgrade `pull`, `push`, and `check` to use `--update` (`-u`), automatic `--backup-dir` protection on overwrites, `local-prefs.json` exclusions, ledger snapshot updates, and the Smart Pre-Flight Diff & Orphan Banner.
-- [ ] **dev_sync/cli.py**: Wire `diff`, `purge`, `restore`, and `empty-trash` actions plus `--json`, `--apply-plan`, `--select`, `--scope`, `--trash`, `--permanent`, `--ignore-local`, and `--yes` flags; update `sync-projects.ps1` and `sync-projects.sh` passthroughs if needed.
-- [ ] **tests/test_diff_and_purge.py**: Add unit tests for hierarchical diff tree assembly, selector parsing (`1, 2.3-2.5`), trash vs. permanent vs. ignore-local plan execution, `restore`, `empty-trash`, and `--json` / `--apply-plan` GUI contracts.
-- [ ] **README.md**: Update documentation, architecture overview, and the **Scenario Combinations Matrix** (`AGENTS.md` updated in-place under 40 lines if ownership deltas change).
-- [ ] **CHANGELOG.md**: Record milestone completion via `python "<config_dir>/skills/system-diagnostics/scripts/diagnose.py" changelog add`
+- [x] **dev_sync/diff.py**: Implement `DiffAnalyzer` combining `rclone check --combined -` and `rclone lsjson` with `git_guard` and `ledger` to produce hierarchical `DiffReport` trees (`FolderDiffNode` -> `FileDiffItem`) with newer/older status, Git badges, and machine provenance.
+- [x] **dev_sync/purge.py**: Implement headless `PurgeExecutor` supporting `--trash` (via `rclone` native `--backup-dir` into `.dev-sync-trash/<timestamp>/` and local `.dev-sync/trash/<timestamp>/`), `--permanent` deletion, `--ignore-local` preference registration, `restore`, and `empty-trash [--older-than <days>]`.
+- [x] **dev_sync/interactive.py**: Implement the terminal numbered Folder/File Tree renderer and selector parser (`1, 3, 2.1-2.4`, action prompts `[T]rash / [P]ermanent / [I]gnore locally / [S]kip`) decoupled from `PurgeExecutor`.
+- [x] **dev_sync/engine.py**: Upgrade `pull`, `push`, and `check` to use `--update` (`-u`), automatic `--backup-dir` protection on overwrites, `local-prefs.json` exclusions, ledger snapshot updates, and the Smart Pre-Flight Diff & Orphan Banner.
+- [x] **dev_sync/cli.py**: Wire `diff`, `purge`, `restore`, and `empty-trash` actions plus `--json`, `--apply-plan`, `--select`, `--scope`, `--trash`, `--permanent`, `--ignore-local`, and `--yes` flags; update `sync-projects.ps1` and `sync-projects.sh` passthroughs if needed.
+- [x] **tests/test_diff_and_purge.py**: Add unit tests for hierarchical diff tree assembly, selector parsing (`1, 2.3-2.5`), trash vs. permanent vs. ignore-local plan execution, `restore`, `empty-trash`, and `--json` / `--apply-plan` GUI contracts.
+- [x] **README.md**: Update documentation, architecture overview, and the **Scenario Combinations Matrix** (`AGENTS.md` updated in-place under 40 lines if ownership deltas change).
+- [x] **CHANGELOG.md**: Record milestone completion via `python "<config_dir>/skills/system-diagnostics/scripts/diagnose.py" changelog add`
 
 #### Verification Commands (Milestone 3)
 ```bash

@@ -15,6 +15,11 @@ from dev_sync.errors import build_rclone_error
 from dev_sync.filter import extract_bloat_roots, parse_filter_rules, resolve_target_filters
 from dev_sync.report import format_diagnostic_report, parse_lsd_duplicates
 from dev_sync.summary import ExecutionSummary, build_summary, format_terminal_summary
+from dev_sync.sync_hooks import (
+    emit_preflight_git_banner,
+    merge_local_prefs_excludes,
+    run_copy_sync,
+)
 
 __all__ = [
     "DEFAULT_PACING_FLAGS",
@@ -274,54 +279,34 @@ class SyncEngine:
             return finish_summary(target.name, "cleanup", dry_run, active_log, show_summary)
 
     def pull(
-        self,
-        target: SyncTarget,
-        dry_run: bool = False,
-        log_path: Optional[Path] = None,
-        show_summary: bool = True,
-        extra_excludes: Optional[List[str]] = None,
-        update: bool = False,
-        backup_dir: Optional[str] = None,
+        self, target: SyncTarget, dry_run: bool = False, log_path: Optional[Path] = None,
+        show_summary: bool = True, extra_excludes: Optional[List[str]] = None,
+        update: bool = True, backup_dir: Optional[str] = None,
     ) -> Optional[ExecutionSummary]:
-        """Download remote files to local, filtering out ignored artifacts."""
+        """Download remote files to local with --update, backup-dir protection, and ledger sync."""
         target.local_path.mkdir(parents=True, exist_ok=True)
         mode_label = "[DRY-RUN] " if dry_run else ""
         print(f"\n--> {mode_label}Pulling from '{target.remote_path}' into '{target.local_path}'...")
-        active_log = prepare_log_path(target, "pull", log_path)
-
-        with self._target_filters(target) as (sync_filter, _):
-            cmd_args = build_copy_args(
-                target.remote_path, str(target.local_path), sync_filter,
-                dry_run=dry_run, extra_excludes=extra_excludes, update=update, backup_dir=backup_dir,
-            )
-            self._run_rclone(cmd_args, log_file=active_log)
-        return finish_summary(target.name, "pull", dry_run, active_log, show_summary)
+        emit_preflight_git_banner(target.local_path)
+        return run_copy_sync(
+            self, target, "pull", target.remote_path, str(target.local_path),
+            dry_run, log_path, show_summary, extra_excludes, update, backup_dir,
+        )
 
     def push(
-        self,
-        target: SyncTarget,
-        dry_run: bool = False,
-        log_path: Optional[Path] = None,
-        show_summary: bool = True,
-        extra_excludes: Optional[List[str]] = None,
-        update: bool = False,
-        backup_dir: Optional[str] = None,
+        self, target: SyncTarget, dry_run: bool = False, log_path: Optional[Path] = None,
+        show_summary: bool = True, extra_excludes: Optional[List[str]] = None,
+        update: bool = True, backup_dir: Optional[str] = None,
     ) -> Optional[ExecutionSummary]:
-        """Upload local files to remote, filtering out ignored artifacts."""
+        """Upload local files to remote with --update, backup-dir protection, and ledger sync."""
         if not target.local_path.exists():
             raise FileNotFoundError(f"Cannot push: local directory does not exist at '{target.local_path}'")
-
         mode_label = "[DRY-RUN] " if dry_run else ""
         print(f"\n--> {mode_label}Pushing from '{target.local_path}' to '{target.remote_path}'...")
-        active_log = prepare_log_path(target, "push", log_path)
-
-        with self._target_filters(target) as (sync_filter, _):
-            cmd_args = build_copy_args(
-                str(target.local_path), target.remote_path, sync_filter,
-                dry_run=dry_run, extra_excludes=extra_excludes, update=update, backup_dir=backup_dir,
-            )
-            self._run_rclone(cmd_args, log_file=active_log)
-        return finish_summary(target.name, "push", dry_run, active_log, show_summary)
+        return run_copy_sync(
+            self, target, "push", str(target.local_path), target.remote_path,
+            dry_run, log_path, show_summary, extra_excludes, update, backup_dir,
+        )
 
     def check(
         self,
@@ -337,7 +322,7 @@ class SyncEngine:
 
         print(f"\n--> Checking synchronization differences between '{target.local_path}' and '{target.remote_path}'...")
         active_log = prepare_log_path(target, "check", log_path)
-        exclude_args = format_exclude_args(extra_excludes)
+        exclude_args = format_exclude_args(merge_local_prefs_excludes(target.local_path, extra_excludes))
 
         with self._target_filters(target) as (sync_filter, _):
             cmd_args = [
