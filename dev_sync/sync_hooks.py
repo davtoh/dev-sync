@@ -43,14 +43,45 @@ def merge_local_prefs_excludes(local_path: Path, extra_excludes: Optional[List[s
     return merged
 
 
-def resolve_backup_dir(target: SyncTarget, action: str, explicit_backup_dir: Optional[str] = None) -> str:
-    """Resolve native rclone --backup-dir for pull/push overwrite protection."""
+def _is_windows_drive_path(path_str: str) -> bool:
+    """Return True if path_str starts with a Windows drive prefix like 'C:\\' or 'C:/'."""
+    return (
+        len(path_str) >= 2
+        and path_str[0].isalpha()
+        and path_str[1] == ":"
+        and (len(path_str) == 2 or path_str[2] in ("/", "\\"))
+    )
+
+
+def _sibling_remote_backup_dir(remote_path: str, target_name: str, ts: str) -> Optional[str]:
+    """Compute a non-overlapping sibling .dev-sync-trash path for rclone --backup-dir."""
+    if ":" in remote_path and not _is_windows_drive_path(remote_path):
+        remote_name, subpath = remote_path.split(":", 1)
+        clean_sub = subpath.strip("/")
+        if not clean_sub:
+            return None
+        if "/" in clean_sub:
+            parent_sub, _ = clean_sub.rsplit("/", 1)
+            return f"{remote_name}:{parent_sub}/.dev-sync-trash/{target_name}/{ts}"
+        return f"{remote_name}:.dev-sync-trash/{target_name}/{ts}"
+
+    remote_local = Path(remote_path)
+    if remote_local.parent == remote_local:
+        return None
+    return str(remote_local.parent / ".dev-sync-trash" / target_name / ts)
+
+
+def resolve_backup_dir(target: SyncTarget, action: str, explicit_backup_dir: Optional[str] = None) -> Optional[str]:
+    """Resolve non-overlapping rclone --backup-dir for pull/push overwrite protection."""
     if explicit_backup_dir:
         return explicit_backup_dir
     ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d_%H%M%S")
     if action == "pull":
-        return str(target.local_path / ".dev-sync" / "trash" / ts)
-    return f"{target.remote_path}/.dev-sync-trash/{ts}"
+        parent = target.local_path.parent
+        if parent == target.local_path:
+            return None
+        return str(parent / ".dev-sync-trash" / target.name / ts)
+    return _sibling_remote_backup_dir(target.remote_path, target.name, ts)
 
 
 def emit_preflight_git_banner(local_path: Path) -> List[str]:

@@ -261,3 +261,34 @@ class TestDiffAndPurge(unittest.TestCase):
         )
         self.assertEqual(parse_selection("2.2-1.1", report), [])
         self.assertEqual([i.rel_path for i in parse_selection("2.1-2", report)], ["rr/x.pdf", "rr/y.pdf"])
+
+    def test_resolve_backup_dir_non_overlapping(self) -> None:
+        from dev_sync.sync_hooks import resolve_backup_dir
+
+        pull_dir = resolve_backup_dir(self.target, "pull")
+        self.assertIsNotNone(pull_dir)
+        assert pull_dir is not None
+        self.assertFalse(Path(pull_dir).is_relative_to(self.local))
+        self.assertEqual(Path(pull_dir).parents[1], self.local.parent / ".dev-sync-trash")
+
+        push_dir = resolve_backup_dir(self.target, "push")
+        self.assertIsNotNone(push_dir)
+        assert push_dir is not None
+        self.assertTrue(push_dir.startswith("gdrive:.dev-sync-trash/proj/"))
+        self.assertFalse(push_dir.startswith("gdrive:proj/"))
+
+        nested_target = SyncTarget(name="sub", local_path=self.local, remote_path="gdrive:work/sub", raw_local=str(self.local))
+        nested_push = resolve_backup_dir(nested_target, "push")
+        self.assertIsNotNone(nested_push)
+        assert nested_push is not None
+        self.assertTrue(nested_push.startswith("gdrive:work/.dev-sync-trash/sub/"))
+
+        root_target = SyncTarget(name="root", local_path=self.local, remote_path="gdrive:", raw_local=str(self.local))
+        self.assertIsNone(resolve_backup_dir(root_target, "push"))
+
+        remote_local_dir = self.local.parent / "remote_proj"
+        local_remote_target = SyncTarget(name="loc", local_path=self.local, remote_path=str(remote_local_dir), raw_local=str(self.local))
+        loc_push = resolve_backup_dir(local_remote_target, "push")
+        self.assertIsNotNone(loc_push)
+        assert loc_push is not None
+        self.assertFalse(Path(loc_push).is_relative_to(remote_local_dir))
