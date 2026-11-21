@@ -76,6 +76,17 @@
 - * copy*
 
 # ==============================================================================
+# dev-sync Trash Quarantine & Local-Only Machine Preferences
+# Protected from both cross-machine sync and automated 'cleanup' deletion.
+# ==============================================================================
+# @local_only
+- .dev-sync-trash/**
+# @local_only
+- .dev-sync/trash/**
+# @local_only
+- .dev-sync/local-prefs.json
+
+# ==============================================================================
 # Semantic Policy Directives:
 # Standard exclusions ('- ') are treated as transient bloat (excluded from sync,
 # and purged on remote during 'cleanup').

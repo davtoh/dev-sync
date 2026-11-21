@@ -5,34 +5,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from dev_sync.cli import main, parse_args
+from dev_sync.cli import parse_args
 from dev_sync.config import SyncTarget
 from dev_sync.engine import SyncEngine, format_diagnostic_report, parse_lsd_duplicates
 
 
-class TestSyncEngine(unittest.TestCase):
-    def setUp(self):
-        self.td = tempfile.TemporaryDirectory()
-        self.base = Path(self.td.name)
-        self.filter_file = self.base / "rclone-ignore.txt"
-        self.filter_file.write_text(
-            """
-            + .env.example
-            - node_modules/**
-            - .env
-            """,
-            encoding="utf-8",
-        )
-        self.target = SyncTarget(
-            name="test_proj",
-            raw_local=str(self.base / "local"),
-            local_path=self.base / "local",
-            remote_path="gdrive:test_proj",
-        )
-
-    def tearDown(self):
-        self.td.cleanup()
-
+class TestCliParsing(unittest.TestCase):
     def test_cli_parse_positional_args(self):
         args = parse_args(["pull", "projects", "--dry-run"])
         self.assertEqual(args.action, "pull")
@@ -46,69 +24,34 @@ class TestSyncEngine(unittest.TestCase):
         self.assertEqual(args.adhoc_local, "$HOME/code")
         self.assertEqual(args.adhoc_remote, "s3:bucket/app")
 
-    @patch("dev_sync.engine.SyncEngine._verify_rclone")
-    @patch("subprocess.run")
-    def test_cleanup_command_construction(self, mock_run, mock_verify):
-        mock_run.return_value = MagicMock(returncode=0)
-        engine = SyncEngine(filter_file=self.filter_file)
-        engine.cleanup(self.target, dry_run=True)
+    def test_cli_parse_log_and_no_summary_flags(self):
+        args = parse_args(["push", "projects", "--log", "custom.jsonl", "--no-summary"])
+        self.assertEqual(args.action, "push")
+        self.assertEqual(args.target, "projects")
+        self.assertEqual(args.log, Path("custom.jsonl"))
+        self.assertTrue(args.no_summary)
 
-        self.assertTrue(mock_run.called)
-        call_args = mock_run.call_args[0][0]
-        self.assertEqual(call_args[0], "rclone")
-        self.assertEqual(call_args[1], "delete")
-        self.assertEqual(call_args[2], "gdrive:test_proj")
-        self.assertIn("--rmdirs", call_args)
-        self.assertIn("--dry-run", call_args)
-        self.assertIn("-P", call_args)
-        self.assertIn("--filter-from", call_args)
-        self.assertIn("--tpslimit", call_args)
-        self.assertIn("--fast-list", call_args)
+    def test_cli_parse_exclude_flags(self):
+        args = parse_args(["push", "projects", "--exclude", "products/* - copia*/**", "--exclude", "*.tmp"])
+        self.assertEqual(args.action, "push")
+        self.assertEqual(args.exclude, ["products/* - copia*/**", "*.tmp"])
 
-    @patch("dev_sync.engine.SyncEngine._verify_rclone")
-    @patch("subprocess.run")
-    def test_cleanup_purges_detected_bloat_roots_first(self, mock_run, mock_verify):
-        def fake_run(cmd, *args, **kwargs):
-            m = MagicMock()
-            m.returncode = 0
-            if "lsf" in cmd:
-                m.stdout = "web/node_modules/\nweb/node_modules/subpkg/\n"
-            else:
-                m.stdout = ""
-            return m
 
-        mock_run.side_effect = fake_run
-        engine = SyncEngine(filter_file=self.filter_file)
-        engine.cleanup(self.target, dry_run=True)
+class TestDiagnosticReports(unittest.TestCase):
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.base = Path(self.td.name)
+        self.filter_file = self.base / "rclone-ignore.txt"
+        self.filter_file.write_text("+ .env.example\n- node_modules/**\n- .env\n", encoding="utf-8")
+        self.target = SyncTarget(
+            name="test_proj",
+            raw_local=str(self.base / "local"),
+            local_path=self.base / "local",
+            remote_path="gdrive:test_proj",
+        )
 
-        calls = [c[0][0] for c in mock_run.call_args_list]
-        self.assertTrue(any(c[1] == "lsf" for c in calls))
-        self.assertTrue(any(c[1] == "purge" and "web/node_modules" in c[2] for c in calls))
-        self.assertTrue(any(c[1] == "delete" for c in calls))
-
-    @patch("dev_sync.engine.SyncEngine._verify_rclone")
-    @patch("subprocess.run")
-    def test_pull_command_construction(self, mock_run, mock_verify):
-        mock_run.return_value = MagicMock(returncode=0)
-        engine = SyncEngine(filter_file=self.filter_file)
-        engine.pull(self.target, dry_run=False)
-
-        self.assertTrue(mock_run.called)
-        call_args = mock_run.call_args[0][0]
-        self.assertEqual(call_args[0], "rclone")
-        self.assertEqual(call_args[1], "copy")
-        self.assertEqual(call_args[2], "gdrive:test_proj")
-        self.assertEqual(call_args[3], str(self.target.local_path))
-        self.assertIn("--filter-from", call_args)
-        self.assertIn(str(self.filter_file), call_args)
-
-    @patch("dev_sync.engine.SyncEngine._verify_rclone")
-    @patch("subprocess.run")
-    def test_push_missing_local_raises(self, mock_run, mock_verify):
-        engine = SyncEngine(filter_file=self.filter_file)
-        # target.local_path does not exist
-        with self.assertRaises(FileNotFoundError):
-            engine.push(self.target)
+    def tearDown(self):
+        self.td.cleanup()
 
     def test_parse_lsd_duplicates(self):
         sample_lsd = """
@@ -118,8 +61,7 @@ class TestSyncEngine(unittest.TestCase):
            0 2026-10-19 22:40:02        -1 web_and_services
            0 2026-10-19 22:36:14        -1 products
         """
-        dups = parse_lsd_duplicates(sample_lsd)
-        self.assertEqual(dups, {"web_and_services": 3})
+        self.assertEqual(parse_lsd_duplicates(sample_lsd), {"web_and_services": 3})
 
     def test_format_diagnostic_report(self):
         report = format_diagnostic_report(
@@ -138,8 +80,7 @@ class TestSyncEngine(unittest.TestCase):
     @patch("subprocess.run")
     def test_diagnose_generates_report_file(self, mock_run, mock_verify):
         def fake_run(cmd, *args, **kwargs):
-            m = MagicMock()
-            m.returncode = 0
+            m = MagicMock(returncode=0)
             if "lsd" in cmd:
                 m.stdout = "           0 2026-10-19 22:40:02 -1 web_and_services\n           0 2026-10-19 22:40:02 -1 web_and_services"
             elif "size" in cmd:
@@ -150,46 +91,86 @@ class TestSyncEngine(unittest.TestCase):
 
         mock_run.side_effect = fake_run
         engine = SyncEngine(filter_file=self.filter_file)
-        custom_report = self.base / "custom_report.txt"
-        saved = engine.diagnose(self.target, report_path=custom_report)
-
+        saved = engine.diagnose(self.target, report_path=self.base / "custom_report.txt")
         self.assertTrue(saved.exists())
         content = saved.read_text(encoding="utf-8")
         self.assertIn("web_and_services/node_modules/", content)
-        self.assertNotIn("web_and_services/node_modules/pkg/", content)  # collapsed to root
+        self.assertNotIn("web_and_services/node_modules/pkg/", content)
         self.assertIn("rclone dedupe", content)
 
-    def test_cli_parse_log_and_no_summary_flags(self):
-        args = parse_args(["push", "projects", "--log", "custom.jsonl", "--no-summary"])
-        self.assertEqual(args.action, "push")
-        self.assertEqual(args.target, "projects")
-        self.assertEqual(args.log, Path("custom.jsonl"))
-        self.assertTrue(args.no_summary)
 
-    def test_cli_parse_exclude_flags(self):
-        args = parse_args(["push", "projects", "--exclude", "products/* - copia*/**", "--exclude", "*.tmp"])
-        self.assertEqual(args.action, "push")
-        self.assertEqual(args.exclude, ["products/* - copia*/**", "*.tmp"])
+class TestSyncEngine(unittest.TestCase):
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.base = Path(self.td.name)
+        self.filter_file = self.base / "rclone-ignore.txt"
+        self.filter_file.write_text("+ .env.example\n- node_modules/**\n- .env\n", encoding="utf-8")
+        self.target = SyncTarget(
+            name="test_proj",
+            raw_local=str(self.base / "local"),
+            local_path=self.base / "local",
+            remote_path="gdrive:test_proj",
+        )
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    @patch("dev_sync.engine.SyncEngine._verify_rclone")
+    @patch("subprocess.run")
+    def test_cleanup_command_construction(self, mock_run, mock_verify):
+        mock_run.return_value = MagicMock(returncode=0)
+        engine = SyncEngine(filter_file=self.filter_file)
+        engine.cleanup(self.target, dry_run=True)
+
+        call_args = mock_run.call_args[0][0]
+        self.assertEqual(call_args[:3], ["rclone", "delete", "gdrive:test_proj"])
+        for flag in ("--rmdirs", "--dry-run", "-P", "--filter-from", "--tpslimit", "--fast-list"):
+            self.assertIn(flag, call_args)
+
+    @patch("dev_sync.engine.SyncEngine._verify_rclone")
+    @patch("subprocess.run")
+    def test_cleanup_purges_detected_bloat_roots_first(self, mock_run, mock_verify):
+        def fake_run(cmd, *args, **kwargs):
+            m = MagicMock(returncode=0)
+            m.stdout = "web/node_modules/\nweb/node_modules/subpkg/\n" if "lsf" in cmd else ""
+            return m
+
+        mock_run.side_effect = fake_run
+        SyncEngine(filter_file=self.filter_file).cleanup(self.target, dry_run=True)
+        calls = [c[0][0] for c in mock_run.call_args_list]
+        self.assertTrue(any(c[1] == "lsf" for c in calls))
+        self.assertTrue(any(c[1] == "purge" and "web/node_modules" in c[2] for c in calls))
+        self.assertTrue(any(c[1] == "delete" for c in calls))
+
+    @patch("dev_sync.engine.SyncEngine._verify_rclone")
+    @patch("subprocess.run")
+    def test_pull_command_construction(self, mock_run, mock_verify):
+        mock_run.return_value = MagicMock(returncode=0)
+        SyncEngine(filter_file=self.filter_file).pull(self.target, dry_run=False)
+        call_args = mock_run.call_args[0][0]
+        self.assertEqual(call_args[:4], ["rclone", "copy", "gdrive:test_proj", str(self.target.local_path)])
+        self.assertIn("--filter-from", call_args)
+        self.assertIn(str(self.filter_file), call_args)
+
+    @patch("dev_sync.engine.SyncEngine._verify_rclone")
+    @patch("subprocess.run")
+    def test_push_missing_local_raises(self, mock_run, mock_verify):
+        with self.assertRaises(FileNotFoundError):
+            SyncEngine(filter_file=self.filter_file).push(self.target)
 
     @patch("dev_sync.engine.SyncEngine._verify_rclone")
     @patch("subprocess.run")
     def test_push_with_extra_excludes(self, mock_run, mock_verify):
         mock_run.return_value = MagicMock(returncode=0)
         self.target.local_path.mkdir(parents=True, exist_ok=True)
-        engine = SyncEngine(filter_file=self.filter_file)
-        engine.push(self.target, dry_run=True, extra_excludes=["products/* - copia*/**", "temp/**"])
-
+        SyncEngine(filter_file=self.filter_file).push(
+            self.target, dry_run=True, extra_excludes=["products/* - copia*/**", "temp/**"]
+        )
         call_args = mock_run.call_args[0][0]
-        self.assertEqual(call_args[0], "rclone")
-        self.assertEqual(call_args[1], "copy")
-        self.assertIn("--exclude", call_args)
+        self.assertEqual(call_args[:2], ["rclone", "copy"])
         self.assertIn("products/* - copia*/**", call_args)
         self.assertIn("temp/**", call_args)
-
-        # Ensure --exclude precedes --filter-from
-        ex_idx = call_args.index("--exclude")
-        ff_idx = call_args.index("--filter-from")
-        self.assertLess(ex_idx, ff_idx, "--exclude should precede --filter-from")
+        self.assertLess(call_args.index("--exclude"), call_args.index("--filter-from"))
 
     @patch("dev_sync.engine.SyncEngine._verify_rclone")
     @patch("subprocess.run")
@@ -201,10 +182,9 @@ class TestSyncEngine(unittest.TestCase):
             '{"level":"notice","msg":"Skipped copy as --dry-run is set","skipped":"copy","size":100,"object":"products/rrtools/main.py"}\n',
             encoding="utf-8",
         )
-
-        engine = SyncEngine(filter_file=self.filter_file)
-        summary = engine.push(self.target, dry_run=True, log_path=custom_log, show_summary=True)
-
+        summary = SyncEngine(filter_file=self.filter_file).push(
+            self.target, dry_run=True, log_path=custom_log, show_summary=True
+        )
         self.assertIsNotNone(summary)
         self.assertEqual(summary.copied_count, 1)
         self.assertIn("products/rrtools/", summary.root_stats)
@@ -212,7 +192,6 @@ class TestSyncEngine(unittest.TestCase):
     @patch("dev_sync.engine.SyncEngine._verify_rclone")
     @patch("subprocess.run")
     def test_check_generates_summary_and_handles_diff_exit_code(self, mock_run, mock_verify):
-        # rclone check returns 1 when differences are found
         mock_run.return_value = MagicMock(returncode=1)
         self.target.local_path.mkdir(parents=True, exist_ok=True)
         custom_log = self.base / "check_test.jsonl"
@@ -220,10 +199,9 @@ class TestSyncEngine(unittest.TestCase):
             '{"level":"error","msg":"sizes differ","object":"products/rrtools/main.py"}\n',
             encoding="utf-8",
         )
-
-        engine = SyncEngine(filter_file=self.filter_file)
-        summary = engine.check(self.target, log_path=custom_log, show_summary=True)
-
+        summary = SyncEngine(filter_file=self.filter_file).check(
+            self.target, log_path=custom_log, show_summary=True
+        )
         self.assertIsNotNone(summary)
         self.assertEqual(summary.diff_count, 1)
         self.assertIn("products/rrtools/", summary.root_stats)

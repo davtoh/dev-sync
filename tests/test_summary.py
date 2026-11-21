@@ -150,10 +150,42 @@ class TestSummaryEngine(unittest.TestCase):
             self.assertEqual(summary.copied_count, 0)
             self.assertEqual(summary.error_count, 0)
             self.assertEqual(summary.diff_count, 1)
+            self.assertEqual(summary.total_files, 2)
+            self.assertNotIn("products/", summary.root_stats)
             self.assertIn("1 synchronization difference(s) detected", " ".join(summary.warnings))
         finally:
             if log_path.exists():
                 log_path.unlink()
+
+    def test_directory_modtime_excluded_from_counts(self):
+        events = [
+            PathEvent(
+                path="web_and_services/app",
+                root_folder="web_and_services/",
+                action="modtime",
+                size=0,
+                level="info",
+                message="Set directory modification time (using SetModTime)",
+            ),
+            PathEvent(
+                path="web_and_services/app/index.ts",
+                root_folder="web_and_services/app/",
+                action="copy",
+                size=256,
+                level="notice",
+                message="Copied (new)",
+            ),
+        ]
+        summary = build_summary("projects", "pull", False, events=events)
+        self.assertEqual(summary.total_files, 1)
+        self.assertEqual(summary.copied_count, 1)
+        self.assertNotIn("web_and_services/", summary.root_stats)
+        self.assertIn("web_and_services/app/", summary.root_stats)
+
+    def test_workspace_category_prefixes_rollup(self):
+        for prefix in ("core_libraries", "research_and_experiments", "rpa_automation", "web_and_services"):
+            self.assertIn(prefix, CONTAINER_ROOT_PREFIXES)
+            self.assertEqual(extract_root_folder(f"{prefix}/my_pkg/src/main.py"), f"{prefix}/my_pkg/")
 
 
 if __name__ == "__main__":
