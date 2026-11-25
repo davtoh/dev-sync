@@ -28,6 +28,53 @@ def parse_lsd_duplicates(output: str) -> dict[str, int]:
     return {name: c for name, c in counts.items() if c > 1}
 
 
+def _format_duplicates_section(duplicates: dict[str, int], remote_path: str) -> List[str]:
+    """Format duplicate remote folder advisory lines."""
+    if not duplicates:
+        return []
+    lines = [
+        "",
+        "ADVISORY: Duplicate Folder Entities Detected on Remote Storage!",
+        "Providers such as Google Drive permit multiple folders with identical names",
+        "under the same parent. The following duplicate names were found:",
+    ]
+    for name, count in duplicates.items():
+        lines.append(f"  - '{name}' ({count} occurrences)")
+    lines.extend([
+        "",
+        "Remediation:",
+        f"  Run 'rclone dedupe {remote_path}' to inspect and merge duplicate folders.",
+    ])
+    return lines
+
+
+def _format_bloat_section(
+    bloat_roots: List[str], target_name: str, remote_path: str, has_duplicates: bool
+) -> List[str]:
+    """Format detected bloat directories and remediation commands."""
+    lines = ["-" * 80, f"[3/3] Detected Remote Bloat Directories ({len(bloat_roots)} Unique Root Locations)", "-" * 80]
+    if bloat_roots:
+        lines.append("The following root directories match rclone-ignore rules and can be safely cleaned:")
+        lines.extend(f"  - {b}" for b in bloat_roots)
+    else:
+        lines.append("No ignored bloat directories detected on remote. Remote is clean!")
+
+    lines.extend([
+        "",
+        "-" * 80,
+        "Remediation & Execution Commands",
+        "-" * 80,
+        "1. Preview remote bloat deletion without deleting source code:",
+        f"   python -m dev_sync cleanup {target_name} --dry-run",
+        "",
+        "2. Execute remote bloat deletion:",
+        f"   python -m dev_sync cleanup {target_name}",
+    ])
+    if has_duplicates:
+        lines.extend(["", "3. Consolidate duplicate remote folders (Google Drive dedupe):", f"   rclone dedupe {remote_path}"])
+    return lines
+
+
 def format_diagnostic_report(
     target: SyncTarget,
     lsd_output: str,
@@ -51,22 +98,7 @@ def format_diagnostic_report(
         "-" * 80,
         lsd_output.strip() if lsd_output.strip() else "(No directories listed or remote empty)",
     ]
-
-    if duplicates:
-        lines.extend([
-            "",
-            "ADVISORY: Duplicate Folder Entities Detected on Remote Storage!",
-            "Providers such as Google Drive permit multiple folders with identical names",
-            "under the same parent. The following duplicate names were found:",
-        ])
-        for name, count in duplicates.items():
-            lines.append(f"  - '{name}' ({count} occurrences)")
-        lines.extend([
-            "",
-            "Remediation:",
-            f"  Run 'rclone dedupe {target.remote_path}' to inspect and merge duplicate folders.",
-        ])
-
+    lines.extend(_format_duplicates_section(duplicates, target.remote_path))
     lines.extend([
         "",
         "-" * 80,
@@ -74,37 +106,8 @@ def format_diagnostic_report(
         "-" * 80,
         size_output.strip() if size_output.strip() else "(No size output)",
         "",
-        "-" * 80,
-        f"[3/3] Detected Remote Bloat Directories ({len(bloat_roots)} Unique Root Locations)",
-        "-" * 80,
     ])
-
-    if bloat_roots:
-        lines.append("The following root directories match rclone-ignore rules and can be safely cleaned:")
-        for b in bloat_roots:
-            lines.append(f"  - {b}")
-    else:
-        lines.append("No ignored bloat directories detected on remote. Remote is clean!")
-
-    lines.extend([
-        "",
-        "-" * 80,
-        "Remediation & Execution Commands",
-        "-" * 80,
-        "1. Preview remote bloat deletion without deleting source code:",
-        f"   python -m dev_sync cleanup {target.name} --dry-run",
-        "",
-        "2. Execute remote bloat deletion:",
-        f"   python -m dev_sync cleanup {target.name}",
-    ])
-
-    if duplicates:
-        lines.extend([
-            "",
-            "3. Consolidate duplicate remote folders (Google Drive dedupe):",
-            f"   rclone dedupe {target.remote_path}",
-        ])
-
+    lines.extend(_format_bloat_section(bloat_roots, target.name, target.remote_path, bool(duplicates)))
     lines.extend(["=" * 80, ""])
     return "\n".join(lines)
 

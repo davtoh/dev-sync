@@ -177,44 +177,52 @@ class TestFilterCompiler(unittest.TestCase):
             base = Path(td)
             global_filter = base / "rclone-ignore.txt"
             global_filter.write_text("- node_modules/**\n+ .env.example\n", encoding="utf-8")
-
             local_project = base / "my_project"
             local_project.mkdir()
-            syncignore = local_project / ".syncignore"
-            syncignore.write_text("- target_custom_bloat/**\n# @local_only\n- local_test_data/**\n", encoding="utf-8")
-
-            target = SyncTarget(
-                name="proj",
-                raw_local=str(local_project),
-                local_path=local_project,
-                remote_path="gdrive:proj",
-                excludes=("cli_extra/**",),
+            (local_project / ".syncignore").write_text(
+                "- target_custom_bloat/**\n# @local_only\n- local_test_data/**\n", encoding="utf-8"
             )
-
+            target = SyncTarget(
+                name="proj", raw_local=str(local_project), local_path=local_project,
+                remote_path="gdrive:proj", excludes=("cli_extra/**",),
+            )
             sync_filter, cleanup_filter, is_temp = resolve_target_filters(global_filter, target)
             try:
-                self.assertTrue(is_temp)
-                self.assertTrue(sync_filter.exists())
-                self.assertTrue(cleanup_filter.exists())
-
+                self.assertTrue(is_temp and sync_filter.exists() and cleanup_filter.exists())
                 sync_content = sync_filter.read_text(encoding="utf-8")
-                self.assertIn("- node_modules/**", sync_content)
-                self.assertIn("- target_custom_bloat/**", sync_content)
-                self.assertIn("- local_test_data/**", sync_content)
-                self.assertIn("- cli_extra/**", sync_content)
-
+                for pat in ("- node_modules/**", "- target_custom_bloat/**", "- local_test_data/**", "- cli_extra/**"):
+                    self.assertIn(pat, sync_content)
                 clean_content = cleanup_filter.read_text(encoding="utf-8")
-                self.assertIn("+ node_modules/**", clean_content)
-                self.assertIn("+ target_custom_bloat/**", clean_content)
-                self.assertIn("+ cli_extra/**", clean_content)
-                # local_test_data was tagged @local_only, so MUST be protected (-)!
-                self.assertIn("- local_test_data/**", clean_content)
+                for pat in ("+ node_modules/**", "+ target_custom_bloat/**", "+ cli_extra/**", "- local_test_data/**"):
+                    self.assertIn(pat, clean_content)
                 self.assertNotIn("+ local_test_data/**", clean_content)
             finally:
-                if sync_filter.exists() and is_temp:
-                    sync_filter.unlink()
-                if cleanup_filter.exists():
-                    cleanup_filter.unlink()
+                for p in (sync_filter if is_temp else None, cleanup_filter):
+                    if p and p.exists():
+                        p.unlink()
+
+    def _populate_mock_project_tree(self, mock_tree: Path) -> None:
+        (mock_tree / "src").mkdir()
+        (mock_tree / "src" / "index.py").write_text("print('hello')", encoding="utf-8")
+        (mock_tree / ".env.example").write_text("API_KEY=sample", encoding="utf-8")
+        (mock_tree / "README.md").write_text("# Readme", encoding="utf-8")
+        (mock_tree / ".env").write_text("SECRET=12345", encoding="utf-8")
+        (mock_tree / ".env.local").write_text("SECRET=local", encoding="utf-8")
+        (mock_tree / ".DS_Store").write_text("metadata", encoding="utf-8")
+        (mock_tree / "node_modules" / "express").mkdir(parents=True)
+        (mock_tree / "node_modules" / "express" / "index.js").write_text("module.exports = {}", encoding="utf-8")
+        (mock_tree / "sub" / ".venv" / "bin").mkdir(parents=True)
+        (mock_tree / "sub" / ".venv" / "bin" / "python").write_text("binary", encoding="utf-8")
+
+    def _assert_mock_cleanup_results(self, mock_tree: Path) -> None:
+        self.assertTrue((mock_tree / "src" / "index.py").exists(), "Source file was deleted!")
+        self.assertTrue((mock_tree / ".env.example").exists(), ".env.example was deleted!")
+        self.assertTrue((mock_tree / "README.md").exists(), "README.md was deleted!")
+        self.assertFalse((mock_tree / ".env").exists(), ".env was not deleted!")
+        self.assertFalse((mock_tree / ".env.local").exists(), ".env.local was not deleted!")
+        self.assertFalse((mock_tree / ".DS_Store").exists(), ".DS_Store was not deleted!")
+        self.assertFalse((mock_tree / "node_modules").exists(), "node_modules was not cleaned up!")
+        self.assertFalse((mock_tree / "sub" / ".venv").exists(), ".venv was not cleaned up!")
 
     def test_rclone_live_cleanup_safety(self):
         """End-to-end empirical verification of rclone filtering using mock filesystem."""
@@ -225,63 +233,48 @@ class TestFilterCompiler(unittest.TestCase):
             base = Path(td)
             mock_tree = base / "mock_project"
             mock_tree.mkdir()
+            self._populate_mock_project_tree(mock_tree)
 
-            # Create sensitive and wanted files (MUST SURVIVE)
-            (mock_tree / "src").mkdir()
-            (mock_tree / "src" / "index.py").write_text("print('hello')", encoding="utf-8")
-            (mock_tree / ".env.example").write_text("API_KEY=sample", encoding="utf-8")
-            (mock_tree / "README.md").write_text("# Readme", encoding="utf-8")
-
-            # Create ignored bloat and secrets (MUST BE DELETED)
-            (mock_tree / ".env").write_text("SECRET=12345", encoding="utf-8")
-            (mock_tree / ".env.local").write_text("SECRET=local", encoding="utf-8")
-            (mock_tree / ".DS_Store").write_text("metadata", encoding="utf-8")
-            (mock_tree / "node_modules" / "express").mkdir(parents=True)
-            (mock_tree / "node_modules" / "express" / "index.js").write_text("module.exports = {}", encoding="utf-8")
-            (mock_tree / "sub" / ".venv" / "bin").mkdir(parents=True)
-            (mock_tree / "sub" / ".venv" / "bin" / "python").write_text("binary", encoding="utf-8")
-
-            # Source ignore file
             ignore_file = base / "rclone-ignore.txt"
             ignore_file.write_text(
-                """
-                # Secrets
-                + **/.env.example
-                - **/.env
-                - **/.env.*
-                - **/.DS_Store
-                - **/node_modules/**
-                - **/.venv/**
-                """,
+                "+ **/.env.example\n- **/.env\n- **/.env.*\n- **/.DS_Store\n- **/node_modules/**\n- **/.venv/**\n",
                 encoding="utf-8",
             )
-
             cleanup_filter = base / "cleanup_filter.tmp"
             generate_cleanup_filter_file(ignore_file, cleanup_filter)
 
-            # Run rclone delete with our compiled filter and --rmdirs
-            cmd = [
-                "rclone",
-                "delete",
-                str(mock_tree),
-                "--filter-from",
-                str(cleanup_filter),
-                "--rmdirs",
-            ]
+            cmd = ["rclone", "delete", str(mock_tree), "--filter-from", str(cleanup_filter), "--rmdirs"]
             res = subprocess.run(cmd, capture_output=True, text=True)
             self.assertEqual(res.returncode, 0, f"rclone delete failed: {res.stderr}")
+            self._assert_mock_cleanup_results(mock_tree)
 
-            # Assert SURVIVED files
-            self.assertTrue((mock_tree / "src" / "index.py").exists(), "Source file was deleted!")
-            self.assertTrue((mock_tree / ".env.example").exists(), ".env.example was deleted!")
-            self.assertTrue((mock_tree / "README.md").exists(), "README.md was deleted!")
-
-            # Assert PURGED files
-            self.assertFalse((mock_tree / ".env").exists(), ".env was not deleted!")
-            self.assertFalse((mock_tree / ".env.local").exists(), ".env.local was not deleted!")
-            self.assertFalse((mock_tree / ".DS_Store").exists(), ".DS_Store was not deleted!")
-            self.assertFalse((mock_tree / "node_modules").exists(), "node_modules was not cleaned up!")
-            self.assertFalse((mock_tree / "sub" / ".venv").exists(), ".venv was not cleaned up!")
+    def test_builtin_trash_and_local_prefs_protection(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            global_filter = base / "rclone-ignore.txt"
+            global_filter.write_text("- node_modules/**\n", encoding="utf-8")
+            local_project = base / "proj"
+            local_project.mkdir()
+            target = SyncTarget(
+                name="proj",
+                raw_local=str(local_project),
+                local_path=local_project,
+                remote_path="gdrive:proj",
+                excludes=("extra_tmp/**",),
+            )
+            sync_filter, cleanup_filter, is_temp = resolve_target_filters(global_filter, target)
+            try:
+                self.assertTrue(is_temp)
+                sync_text = sync_filter.read_text(encoding="utf-8")
+                clean_text = cleanup_filter.read_text(encoding="utf-8")
+                for pat in (".dev-sync-trash/**", ".dev-sync/trash/**", ".dev-sync/local-prefs.json"):
+                    self.assertIn(f"- {pat}", sync_text)
+                    self.assertIn(f"- {pat}", clean_text)
+                    self.assertNotIn(f"+ {pat}", clean_text)
+            finally:
+                for p in (sync_filter if is_temp else None, cleanup_filter):
+                    if p and p.exists():
+                        p.unlink()
 
 
 if __name__ == "__main__":

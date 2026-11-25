@@ -117,6 +117,51 @@ def create_target(
     )
 
 
+def _parse_target_options(parts: list[str], repo_root: Optional[Path]) -> tuple[tuple[str, ...], Optional[Path]]:
+    """Parse optional exclude= and filter= directives from a config line."""
+    target_excludes: list[str] = []
+    custom_filter_path: Optional[Path] = None
+
+    for opt in parts:
+        if opt.startswith("exclude=") or opt.startswith("excludes="):
+            _, val = opt.split("=", 1)
+            for pat in val.split(";"):
+                clean_pat = pat.strip()
+                if clean_pat:
+                    target_excludes.append(clean_pat)
+        elif opt.startswith("filter="):
+            _, val = opt.split("=", 1)
+            clean_val = val.strip()
+            if clean_val:
+                cf = Path(clean_val)
+                if not cf.is_absolute() and repo_root:
+                    cf = repo_root / cf
+                custom_filter_path = cf
+
+    return tuple(target_excludes), custom_filter_path
+
+
+def _parse_target_line(line: str, line_num: int, config_path: Path, repo_root: Optional[Path]) -> SyncTarget:
+    """Parse a single non-comment line from sync-targets.conf into a SyncTarget."""
+    if "=" not in line:
+        raise ValueError(f"Invalid format at {config_path}:{line_num}: missing '=' separator")
+
+    name, mapping = line.split("=", 1)
+    if "|" not in mapping:
+        raise ValueError(f"Invalid format at {config_path}:{line_num}: mapping must contain '|' (<local>|<remote>)")
+
+    parts = [p.strip() for p in mapping.split("|")]
+    excludes, custom_filter = _parse_target_options(parts[2:], repo_root)
+    return create_target(
+        name=name.strip(),
+        raw_local=parts[0],
+        remote_path=parts[1],
+        repo_root=repo_root,
+        excludes=excludes,
+        custom_filter=custom_filter,
+    )
+
+
 def load_targets(config_path: Path, repo_root: Optional[Path] = None) -> Dict[str, SyncTarget]:
     """Parse sync-targets.conf and return a mapping of name -> SyncTarget.
 
@@ -131,51 +176,11 @@ def load_targets(config_path: Path, repo_root: Optional[Path] = None) -> Dict[st
 
     content = config_path.read_text(encoding="utf-8")
     targets: Dict[str, SyncTarget] = {}
-
     for line_num, raw_line in enumerate(content.splitlines(), start=1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-
-        if "=" not in line:
-            raise ValueError(f"Invalid format at {config_path}:{line_num}: missing '=' separator")
-
-        name, mapping = line.split("=", 1)
-        name = name.strip()
-
-        if "|" not in mapping:
-            raise ValueError(f"Invalid format at {config_path}:{line_num}: mapping must contain '|' (<local>|<remote>)")
-
-        parts = [p.strip() for p in mapping.split("|")]
-        raw_local, raw_remote = parts[0], parts[1]
-
-        target_excludes: list[str] = []
-        custom_filter_path: Optional[Path] = None
-
-        for opt in parts[2:]:
-            if opt.startswith("exclude=") or opt.startswith("excludes="):
-                _, val = opt.split("=", 1)
-                for pat in val.split(";"):
-                    clean_pat = pat.strip()
-                    if clean_pat:
-                        target_excludes.append(clean_pat)
-            elif opt.startswith("filter="):
-                _, val = opt.split("=", 1)
-                clean_val = val.strip()
-                if clean_val:
-                    cf = Path(clean_val)
-                    if not cf.is_absolute() and repo_root:
-                        cf = repo_root / cf
-                    custom_filter_path = cf
-
-        target = create_target(
-            name=name,
-            raw_local=raw_local,
-            remote_path=raw_remote,
-            repo_root=repo_root,
-            excludes=tuple(target_excludes),
-            custom_filter=custom_filter_path,
-        )
+        target = _parse_target_line(line, line_num, config_path, repo_root)
         targets[target.name] = target
 
     return targets
